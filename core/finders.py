@@ -16,6 +16,7 @@ import time
 import urllib.parse
 import urllib.request
 
+from . import net
 from . import retry as retry_mod
 
 ICYPEAS_SEARCH = "https://app.icypeas.com/api/email-search"
@@ -35,7 +36,8 @@ def _domain_or_company(firm: dict) -> str:
 def _http_icypeas(first, last, doc, api_key, timeout, wait):
     body = json.dumps({"firstname": first, "lastname": last, "domainOrCompany": doc}).encode()
     req = urllib.request.Request(ICYPEAS_SEARCH, data=body, method="POST",
-                                 headers={"Content-Type": "application/json", "Authorization": api_key})
+                                 headers=net.headers({"Content-Type": "application/json",
+                                                      "Authorization": api_key}))
     with urllib.request.urlopen(req, timeout=timeout) as r:
         find = json.loads(r.read().decode("utf-8", "replace"))
     sid = (find.get("item") or {}).get("_id") or find.get("_id") or ""
@@ -44,7 +46,8 @@ def _http_icypeas(first, last, doc, api_key, timeout, wait):
     time.sleep(wait)
     rbody = json.dumps({"id": sid}).encode()
     req2 = urllib.request.Request(ICYPEAS_READ, data=rbody, method="POST",
-                                  headers={"Content-Type": "application/json", "Authorization": api_key})
+                                  headers=net.headers({"Content-Type": "application/json",
+                                                       "Authorization": api_key}))
     with urllib.request.urlopen(req2, timeout=timeout) as r2:
         return json.loads(r2.read().decode("utf-8", "replace"))
 
@@ -95,8 +98,8 @@ def find_icypeas(firm: dict, api_key: str = "", *, test_mode: bool = False,
 def _http_anymail(domain, full_name, company, api_key, timeout):
     body = urllib.parse.urlencode({"domain": domain, "full_name": full_name, "company_name": company}).encode()
     req = urllib.request.Request(ANYMAIL_URL, data=body, method="POST",
-                                 headers={"Content-Type": "application/x-www-form-urlencoded",
-                                          "Authorization": "Bearer " + api_key})
+                                 headers=net.headers({"Content-Type": "application/x-www-form-urlencoded",
+                                                      "Authorization": "Bearer " + api_key}))
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
 

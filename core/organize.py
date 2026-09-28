@@ -177,59 +177,119 @@ def title_rank(title: str) -> tuple[int, int]:
     return (len(SENIORITY), 9)
 
 
-def _directors_from_row(row: dict) -> list[dict]:
-    """Directors on one input row.
+# ── the sheet's own ranking beats ours ───────────────────────────────
+#
+# The Eco sheet carries `seniority_label` at 100% fill, built from a two-ladder
+# ranking agreed 2026-08-30. V1 ignored it and re-ranked with SENIORITY above against
+# `Job Title`, which is only 23% filled — so it picked WORSE contacts than the sheet
+# had already picked. When `seniority_rank` is mapped we trust it and rank on it first.
+#
+# Order is best-first. A label we do not recognise still beats a blank one, because
+# "the person whose job title we know wins" (the tie-break fixed 2026-08-31).
+SENIORITY_LABELS = ["owner", "leadership", "partner", "specialist_partner",
+                    "accountant_principal", "statutory_director", "practice_manager"]
+UNKNOWN_LABEL_RANK = 90
+NO_LABEL_RANK = 99
+
+
+def label_rank(label: str) -> int:
+    """Rank from the sheet's own seniority label. Blank = neutral, so a sheet without
+    the column behaves exactly like V1."""
+    l = re.sub(r"[^a-z0-9]+", "_", str(label or "").strip().lower()).strip("_")
+    if not l:
+        return NO_LABEL_RANK
+    try:
+        return SENIORITY_LABELS.index(l)
+    except ValueError:
+        return UNKNOWN_LABEL_RANK
+
+
+def _directors_from_row(row: dict, fm) -> list[dict]:
+    """The people on one input row.
+
     Company-rows (Companies House / v7): a multi-value 'Director Names' field
     (+ parallel 'Director's Age'), no per-person titles.
-    Apollo person-rows: a single Name (+ Title, + optional Age)."""
-    names = split_people(_get(row, "Director Names", "Director Name", "Directors"))
-    if names:
-        ages = parse_ages(_get(row, "Director's Age", "Director Age", "Directors Age"))
-        return [{"name": n, "title": "", "age": ages[i] if i < len(ages) else None}
+    Person-rows (Apollo / the Eco sheet): a single Contact Name (+ Job Title, + Age).
+
+    Both arrive through the SAME mapped field (`contact_name`); how many names come out
+    of it decides which shape this row is. `seniority_rank` rides along so the ranking
+    step can use the sheet's own ladder."""
+    rank_label = fm.get(row, "seniority_rank")
+    names = split_people(fm.get(row, "contact_name"))
+    ages = parse_ages(fm.get(row, "contact_age"))
+    if len(names) > 1:
+        # a multi-person cell has no per-person title to attach
+        return [{"name": n, "title": "", "age": ages[i] if i < len(ages) else None,
+                 "rank_label": ""}
                 for i, n in enumerate(names) if n]
-    single = _get(row, "Name", "Full Name", "Director", "Contact Name")
+    single = names[0] if names else ""
     if not single:
-        single = (_get(row, "First Name") + " " + _get(row, "Last Name")).strip()
+        single = f"{fm.get(row, 'contact_first')} {fm.get(row, 'contact_last')}".strip()
     if single:
-        ages = parse_ages(_get(row, "Age", "Director's Age"))
-        return [{"name": single,
-                 "title": _get(row, "Title", "Job Title", "Role", "Position", "Seniority"),
-                 "age": ages[0] if ages else None}]
+        return [{"name": single, "title": fm.get(row, "job_title"),
+                 "age": ages[0] if ages else None, "rank_label": rank_label}]
     return []
 
 
-def organize(rows, owned_companies=None, owned_domains=None, *, strict_status: bool = True) -> dict:
-    """Merge many CSVs -> group by firm -> rank the primary contact by seniority
-    (oldest-age tie-break) -> dedupe -> suppress. One clean row per firm.
-    strict_status: blank Status = process, anything written = already done."""
+def organize(rows, owned_companies=None, owned_domains=None, *, strict_status: bool = True,
+             fm=None, keep_raw: bool = False) -> dict:
+    """Merge many CSVs -> group by firm -> rank the primary contact -> dedupe -> suppress.
+    One clean row per firm.
+
+    fm         : a FieldMap. Without one, every field falls back to V1's alias guessing,
+                 so an existing V7-shaped sheet behaves exactly as before.
+    keep_raw   : attach the original sheet row as `_raw`. The dynamic label table needs
+                 it to read columns the engine has no name for (trigger_family and the
+                 rest). Off by default because a full 21k-row organize would double in
+                 size; the campaign runner turns it on for the capped selection.
+    strict_status: blank Status = process, anything written = already done.
+    """
+    from . import fieldmap as fieldmap_mod
+    fm = fm if fm is not None else fieldmap_mod.FieldMap({})
+    explicit_key = fm.has("row_key")
+
     owned_c = {_norm_company(c) for c in (owned_companies or []) if c}
     owned_d = {clean_domain(d) for d in (owned_domains or []) if d}
     skipped = {"already_processed": 0, "no_company": 0, "duplicate": 0, "suppressed": 0}
 
     groups, order = {}, []
     for row in rows:
-        if not is_processable(_get(row, "Status", "Final Status"), strict=strict_status):
+        if not is_processable(fm.get(row, "status") or fm.get(row, "final_status"),
+                              strict=strict_status):
             skipped["already_processed"] += 1
             continue
-        company = _get(row, "Company Name", "lead_company", "Organization", "Company")
+        company = fm.get(row, "company_name")
         if not company:
             skipped["no_company"] += 1
             continue
-        reg = _get(row, "Reg Number", "Registration Number")
-        key = _norm_company(reg or company)
+        reg = fm.get(row, "reg_number")
+        row_key = fm.get(row, "row_key")
+        # A sheet with its own unique id (Eco's lead_id) groups on that. Otherwise fall
+        # back to V1's reg-then-name key, which is what merges the same firm across CSVs.
+        key = _norm_company(row_key) if (explicit_key and row_key) else _norm_company(reg or company)
         if key not in groups:
-            website = _get(row, "Website", "lead_website", "URL", "Domain", "Clean Website Domain")
+            website = fm.get(row, "website")
             groups[key] = {
-                "Company Name": company, "Reg Number": reg, "company_key": reg or company,
+                "Company Name": company, "Reg Number": reg,
+                "company_key": row_key or reg or company,
+                "row_key": row_key,
                 "website": website, "domain": clean_domain(website),
-                "phone": _get(row, "Telephone", "Phone", "Phone Number"),
-                "city": extract_city(_get(row, "Address", "Region")),
-                "years": _get(row, "Years Trading", "lead_years"),
+                "phone": fm.get(row, "phone"),
+                "city": extract_city(fm.get(row, "address") or fm.get(row, "region")),
+                "years": fm.get(row, "trading_years"),
+                "seniority_label": fm.get(row, "seniority_rank"),
+                # The address ALREADY on the row. V1's CSV path attached this separately,
+                # so the campaign path never saw it and guessed patterns from scratch —
+                # re-buying addresses that were already paid for. It belongs here, where
+                # every path gets it. (fixed 2026-09-06)
+                "existing_email": fm.get(row, "found_email"),
+                "gateway": fm.get(row, "gateway_provider"),
+                "raw": row if keep_raw else None,
                 "directors": [], "seen_names": set(),
             }
             order.append(key)
         g = groups[key]
-        for d in _directors_from_row(row):
+        for d in _directors_from_row(row, fm):
             nkey = re.sub(r"[^a-z]", "", d["name"].lower())
             if nkey and nkey in g["seen_names"]:      # same person across files -> merge
                 skipped["duplicate"] += 1
@@ -245,9 +305,14 @@ def organize(rows, owned_companies=None, owned_domains=None, *, strict_status: b
         if key in owned_c or (g["domain"] and g["domain"] in owned_d):
             skipped["suppressed"] += 1
             continue
-        directors = g["directors"] or [{"name": "", "title": "", "age": None, "idx": 1}]
-        # primary: most senior title; tie -> oldest age; tie -> plain-beats-prefixed; tie -> order
+        directors = g["directors"] or [{"name": "", "title": "", "age": None,
+                                        "rank_label": "", "idx": 1}]
+        # primary contact:
+        #   1. the SHEET's own seniority label, when it has one (neutral when it does not)
+        #   2. most senior title      3. oldest age
+        #   4. plain title beats a prefixed one     5. the order they arrived
         ranked = sorted(directors, key=lambda d: (
+            label_rank(d.get("rank_label")),
             title_rank(d["title"])[0],
             -(d["age"] if d["age"] is not None else -1),
             title_rank(d["title"])[1],
@@ -257,12 +322,19 @@ def organize(rows, owned_companies=None, owned_domains=None, *, strict_status: b
         p = name_parts(primary["name"])
         firm = {
             "Company Name": g["Company Name"], "Reg Number": g["Reg Number"],
-            "company_key": g["company_key"], "lead_domain": g["domain"],
+            "company_key": g["company_key"], "row_key": g["row_key"],
+            "lead_domain": g["domain"],
             "lead_website": g["website"], "lead_phone": g["phone"],
             "lead_city": g["city"], "lead_years": g["years"],
             "is_no_website_path": not g["domain"],
+            # the pipeline's step 2 reads these; without them it skips straight to
+            # pattern guessing and pays to rediscover an address the sheet already had
+            "lead_endole_email": g["existing_email"],
+            "endole_generic": is_generic_email(g["existing_email"]) if g["existing_email"] else False,
+            "email_security_gateway_provider": g["gateway"],
             "total_directors_available": len([d for d in directors if d["name"]]),
             "primary_title": primary["title"],
+            "seniority_label": primary.get("rank_label") or g["seniority_label"],
             "lead_director": p["clean"], "lead_firstname": p["first"],
             "lead_lastname": p["last"], "lead_initials": p["initials"],
             "Oldest Director Name": by_age[0]["name"],
@@ -270,6 +342,8 @@ def organize(rows, owned_companies=None, owned_domains=None, *, strict_status: b
         }
         for i in range(DIRECTOR_COLUMNS_TO_LOG):
             firm[f"Director {i + 1} Name"] = ranked[i]["name"] if i < len(ranked) else ""
+        if keep_raw and g["raw"] is not None:
+            firm["_raw"] = g["raw"]
         firms.append(firm)
 
     return {"firms": firms, "skipped": skipped, "count": len(firms)}

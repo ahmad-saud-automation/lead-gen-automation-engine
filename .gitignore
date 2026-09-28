@@ -14,3 +14,10 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# UI: dependencies live outside this folder (see build-ui.bat) and the bundle is built
+ui/node_modules/
+webapp/dist/
+
+# written automatically before any config change, so the previous version survives
+config/*.backup.json

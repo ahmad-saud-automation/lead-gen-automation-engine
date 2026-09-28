@@ -25,6 +25,7 @@ import json
 import urllib.parse
 import urllib.request
 
+from . import net
 from . import retry as retry_mod
 
 MV_ENDPOINT = "https://api.millionverifier.com/api/v3/"
@@ -66,7 +67,8 @@ def classify_response(resp: dict, accept_catchall: bool = False) -> dict:
 
 def _http_transport(email: str, api_key: str, timeout: int = 10) -> dict:
     q = urllib.parse.urlencode({"api": api_key, "email": email, "timeout": str(timeout)})
-    with urllib.request.urlopen(MV_ENDPOINT + "?" + q, timeout=timeout + 5) as r:
+    req = urllib.request.Request(MV_ENDPOINT + "?" + q, headers=net.headers())
+    with urllib.request.urlopen(req, timeout=timeout + 5) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
 
 

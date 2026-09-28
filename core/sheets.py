@@ -20,19 +20,68 @@ import io
 import re
 import urllib.request
 
+from . import net
+
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-# the columns V7 writes back after a successful push
+# The columns V7 writes back after a successful push.
+#
+# Matches ecooutsourcing/docs/15-google-sheet-architecture.md (2026-08-31):
+#   * "Selected Director" is now "Contact Name" — most of these people are not directors.
+#   * "send_ready" and "mv_date" are new. Nothing may be pushed unless send_ready = yes;
+#     mv_date exists because B2B email decays about 2% a month.
+#   * The Oldest / Youngest / Director 1-3 slots are GONE. The sheet carries exactly one
+#     backup person ("Contact 2 ..."), released by hand through verify_contact_2, so
+#     MillionVerifier can never auto-spend on a second contact.
+#
+# Only columns present in the sheet header are written, so a name that does not match is
+# silently dropped — keep this list and the sheet in step.
 WRITEBACK_COLUMNS = [
-    "Status", "Final Status", "Found Email", "Selected Director", "Email Source",
-    "Email Type", "Verification Status", "Campaign Type", "Ice Breaker",
-    "Oldest Director Name", "Oldest Director Email", "Oldest Director Source", "Oldest Director Verification",
-    "Youngest Director Name", "Youngest Director Email", "Youngest Director Source", "Youngest Director Verification",
-    "Director 1 Name", "Director 1 Email", "Director 1 Source", "Director 1 Verification",
-    "Director 2 Name", "Director 2 Email", "Director 2 Source", "Director 2 Verification",
-    "Director 3 Name", "Director 3 Email", "Director 3 Source", "Director 3 Verification",
-    "Alternate Emails",
+    "Status", "Final Status", "send_ready",
+    "Found Email", "Contact Name", "Email Source", "Email Type",
+    "Verification Status", "mv_date", "Alternate Emails",
+    "Campaign Type", "Ice Breaker",
+    "Contact 2 Email",
 ]
+
+# The same list, as V7 column name -> engine field. `to_sheet_row` uses it to rewrite a
+# write-back row into whatever the target sheet actually calls those columns, so the
+# engine can write to a sheet that uses none of V7's names.
+WRITEBACK_FIELDS = {
+    "Status": "status", "Final Status": "final_status", "send_ready": "send_gate",
+    "Found Email": "found_email", "Contact Name": "contact_name",
+    "Email Source": "email_source", "Email Type": "email_type",
+    "Verification Status": "verification_status", "mv_date": "mv_date",
+    "Alternate Emails": "alternate_emails", "Campaign Type": "campaign_type",
+    "Ice Breaker": "icebreaker", "Contact 2 Email": "contact_2_email",
+}
+
+
+def to_sheet_row(row: dict, fm) -> dict:
+    """A V7-named write-back row -> the real headers in YOUR sheet.
+
+    An engine field the map does not resolve is DROPPED, deliberately. Writing to a
+    column that does not exist is silently discarded by Google Sheets — no error, just a
+    blank cell — so a missing mapping must fail loudly at validate time, never quietly
+    here."""
+    out: dict = {}
+    for v7_name, field in WRITEBACK_FIELDS.items():
+        if v7_name not in row:
+            continue
+        header = fm.header(field)
+        if header:
+            out[header] = row[v7_name]
+    key_header = fm.header("row_key")
+    if key_header:
+        out[key_header] = (row.get("lead_id") or row.get("row_key")
+                           or row.get("Company Name") or "")
+    return out
+
+
+def writeback_headers(fm) -> list[str]:
+    """Every sheet header this map allows the engine to write."""
+    heads = [fm.header(f) for f in WRITEBACK_FIELDS.values()]
+    return [h for h in heads if h]
 
 
 def parse_sheet_url(url: str) -> dict:
@@ -56,7 +105,8 @@ def read_via_csv_export(doc_id: str, gid: str = "", *, timeout: int = 30, opener
     if opener:
         text = opener(url)
     else:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=net.headers()),
+                                    timeout=timeout) as r:
             if "text/csv" not in (r.headers.get("Content-Type") or "") and r.geturl().find("accounts.google.com") != -1:
                 raise PermissionError("Sheet is not link-viewable — share it or use a service account.")
             text = r.read().decode("utf-8-sig", "replace")
@@ -101,9 +151,14 @@ class SheetsClient:
         res = self._svc.spreadsheets().values().get(spreadsheetId=doc_id, range=f"{tab}!1:1").execute()
         return [str(h).strip() for h in (res.get("values") or [[]])[0]]
 
-    def open_writer(self, doc_id: str, tab: str, key_column: str = "Company Name"):
+    def open_writer(self, doc_id: str, tab: str, key_column: str = "Company Name",
+                    allowed: list | None = None):
         """Read the header + row index ONCE, then write rows one at a time as each
-        lead is pushed — same live behaviour as n8n's per-item Update Sheet node."""
+        lead is pushed — same live behaviour as n8n's per-item Update Sheet node.
+
+        `allowed` is the write allow-list. Defaults to V7's fixed column names; pass
+        `writeback_headers(fm)` to write to a sheet that uses its own names."""
+        writable = set(allowed if allowed is not None else WRITEBACK_COLUMNS)
         header = self._header(doc_id, tab)
         if key_column not in header:
             raise ValueError(f"'{key_column}' column not found in tab '{tab}'")
@@ -123,7 +178,7 @@ class SheetsClient:
             sheet_row = row_i + 2                       # +1 header, +1 for 1-based rows
             data = [{"range": f"{tab}!{col_letter(cols[c])}{sheet_row}", "values": [[v]]}
                     for c, v in update.items()
-                    if c != key_column and c in WRITEBACK_COLUMNS and c in cols]
+                    if c != key_column and c in writable and c in cols]
             if not data:
                 return {"ok": False, "reason": "no writable columns"}
             self._svc.spreadsheets().values().batchUpdate(
@@ -134,9 +189,11 @@ class SheetsClient:
         return write_row
 
     def update_statuses(self, doc_id: str, tab: str, updates: list[dict],
-                        key_column: str = "Company Name") -> dict:
+                        key_column: str = "Company Name", allowed: list | None = None) -> dict:
         """updates = [{'Company Name': ..., 'Status': ..., ...}]. Matches existing rows by
-        key_column and writes only WRITEBACK_COLUMNS that exist in the sheet header."""
+        key_column and writes only allowed columns that exist in the sheet header.
+        `allowed` defaults to V7's names; pass `writeback_headers(fm)` for your own."""
+        writable = set(allowed if allowed is not None else WRITEBACK_COLUMNS)
         header = self._header(doc_id, tab)
         if key_column not in header:
             return {"ok": False, "error": f"'{key_column}' column not found in {tab}", "updated": 0}
@@ -153,7 +210,7 @@ class SheetsClient:
                 continue
             sheet_row = row_i + 2                      # +1 header, +1 to 1-based
             for col, val in up.items():
-                if col == key_column or col not in WRITEBACK_COLUMNS or col not in header:
+                if col == key_column or col not in writable or col not in header:
                     continue
                 a1 = f"{tab}!{col_letter(header.index(col))}{sheet_row}"
                 data.append({"range": a1, "values": [[val]]})
@@ -166,29 +223,56 @@ class SheetsClient:
 
 
 def build_writeback_row(result: dict, status: str) -> dict:
-    """One result row -> the V7 sheet update payload."""
+    """One result row -> the sheet update payload.
+
+    Matches docs/15-google-sheet-architecture.md. `send_ready` is the send gate: only a
+    MillionVerifier PASS sets it to yes, so an address that was merely guessed can never
+    be pushed. `Contact 2 Email` is filled only when the row was released by hand.
+
+    ⛔ THE ENGINE ONLY EVER ADDS INFORMATION. Two rules, both learned the hard way on
+    2026-09-06 when a live run wiped two paid-for `apollo_old` addresses:
+
+      1. A lead that found NOTHING writes only its status. A failed search tells us our
+         attempt failed — it tells us nothing about the address already on the row, so
+         that address, its source, its verification and its ice breaker are left alone.
+      2. A blank value is never written over anything. Empty means "we did not learn
+         this", not "delete what is there".
+    """
     src = result.get("email_source") or "selected"
-    email = result.get("found_email", "")
+    email = str(result.get("found_email") or "").strip()
     ver = result.get("verification", "")
-    return {
+    accepted = bool(result.get("accepted", email and str(ver).strip().lower() in
+                               ("good", "ok", "valid", "deliverable", "verified")))
+
+    if not email:
+        # nothing was found: record the attempt and touch nothing else
+        out = {
+            "lead_id": result.get("lead_id", "") or result.get("row_key", ""),
+            "Company Name": result.get("company", ""),
+            "Status": status, "Final Status": status,
+        }
+        camp = str(result.get("campaign_type") or "").strip()
+        if camp:
+            out["Campaign Type"] = camp
+        return out
+
+    row = {
+        # lead_id carries the sheet's own key when there is one; to_sheet_row reads it
+        "lead_id": result.get("lead_id", "") or result.get("row_key", ""),
         "Company Name": result.get("company", ""),
         "Status": status, "Final Status": status,
+        "send_ready": "yes" if accepted else "no",
         "Found Email": email,
-        "Selected Director": result.get("selected_director", ""),
+        "Contact Name": result.get("contact_name")
+                        or result.get("selected_director", ""),
         "Email Source": src,
         "Email Type": result.get("email_type", "director"),
         "Verification Status": ver,
+        "mv_date": result.get("mv_date", ""),
+        "Alternate Emails": result.get("alternate_emails", ""),
         "Campaign Type": result.get("campaign_type", "director_main_campaign"),
         "Ice Breaker": result.get("icebreaker", ""),
-        "Oldest Director Name": result.get("Oldest Director Name", ""),
-        "Oldest Director Email": result.get("Oldest Director Email", ""),
-        "Oldest Director Source": src if result.get("Oldest Director Email") else "",
-        "Oldest Director Verification": result.get("Oldest Director Verification", ""),
-        "Youngest Director Name": result.get("Youngest Director Name", ""),
-        "Director 1 Name": result.get("Director 1 Name", ""),
-        "Director 1 Email": result.get("Director 1 Email", ""),
-        "Director 1 Source": src if result.get("Director 1 Email") else "",
-        "Director 1 Verification": result.get("Director 1 Verification", ""),
-        "Director 2 Name": result.get("Director 2 Name", ""),
-        "Director 3 Name": result.get("Director 3 Name", ""),
+        "Contact 2 Email": result.get("contact_2_email", ""),
     }
+    # rule 2: never write a blank over something that is already there
+    return {k: v for k, v in row.items() if str(v or "").strip() != ""}

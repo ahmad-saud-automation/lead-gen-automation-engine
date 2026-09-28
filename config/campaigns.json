@@ -1,0 +1,664 @@
+{
+  "note": "Many campaigns off one sheet. Campaigns are checked in PRIORITY order and the FIRST one whose rules match claims the row - that is how 'one firm, one campaign' is enforced. Everything here starts disabled with no Instantly id: nothing can run or send until you fill those in deliberately. Run `plan` first - it is free and tells you how many rows each lane would take.",
+  "globals": {
+    "daily_push_cap": 300,
+    "daily_spend_cap_usd": 5,
+    "note": "Ceilings across ALL campaigns in one day. 300 leaves headroom under ~350/day across 10 mailboxes (docs/09 PART 4). $5.00/day is roughly 2,800 MillionVerifier checks at $0.00178."
+  },
+  "campaigns": [
+    {
+      "id": "eco-size-micro",
+      "name": "Practices 2-10 staff",
+      "note": "September WHO test, size arm A. STATE.md counts 1,670 rows in this band - clears the decision agent's 300 floor. LIMITS TEMPORARILY LOWERED TO 5 FOR THE FIRST LIVE TEST (2026-09-06) - raise per_run back to 50 and per_day to 100 once the first push is confirmed in Instantly.",
+      "enabled": true,
+      "priority": 10,
+      "tab": "Practices",
+      "fieldmap": "fieldmap.eco.json",
+      "rules": {
+        "all": [
+          {
+            "field": "status",
+            "op": "is_blank"
+          },
+          {
+            "field": "final_status",
+            "op": "is_blank"
+          },
+          {
+            "field": "send_gate",
+            "op": "equals",
+            "value": "yes"
+          },
+          {
+            "field": "employees",
+            "op": "between",
+            "value": [
+              2,
+              10
+            ]
+          }
+        ],
+        "none": [
+          {
+            "field": "a8om_contacted",
+            "op": "equals",
+            "value": "yes"
+          }
+        ]
+      },
+      "order": [
+        {
+          "field": "contact_source",
+          "order": [
+            "apollo_reveal",
+            "apollo_old",
+            "icypeas",
+            "pattern_mv"
+          ]
+        },
+        {
+          "field": "evidence_strength",
+          "order": [
+            "strong",
+            "medium",
+            "weak",
+            "none"
+          ]
+        },
+        {
+          "field": "trading_years",
+          "dir": "desc"
+        }
+      ],
+      "limits": {
+        "per_run": 5,
+        "per_day": 0,
+        "max_spend_usd": 0.25
+      },
+      "instantly": {
+        "campaign_id": "dcc4072c-b7d2-4dab-a016-415bd56d84f5",
+        "blocklist_id": "",
+        "skip_if_in_workspace": false,
+        "skip_if_in_campaign": false,
+        "skip_if_in_list": true
+      },
+      "labels": [
+        {
+          "send_as": "Address",
+          "type": "column",
+          "source": [
+            "city",
+            "region",
+            "Address"
+          ],
+          "fallback": ""
+        },
+        {
+          "send_as": "trigger_family",
+          "type": "column",
+          "source": "trigger_family",
+          "fallback": "V0_volume"
+        },
+        {
+          "send_as": "evidence_source",
+          "type": "column",
+          "source": "evidence_source",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "evidence_strength",
+          "type": "column",
+          "source": "evidence_strength",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "contact_source",
+          "type": "column",
+          "source": "contact_source",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "verify_status",
+          "type": "column",
+          "source": "verify_status",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "seniority_tier",
+          "type": "derived",
+          "source": "seniority_tier",
+          "fallback": "unknown"
+        },
+        {
+          "send_as": "size_band",
+          "type": "derived",
+          "source": "size_band",
+          "fallback": "unknown"
+        },
+        {
+          "send_as": "Intent",
+          "type": "column",
+          "source": "Intent",
+          "fallback": "none"
+        },
+        {
+          "send_as": "evidence_ref",
+          "type": "column",
+          "source": "evidence_ref",
+          "omit_if_blank": true
+        },
+        {
+          "send_as": "test_arm",
+          "type": "fixed",
+          "value": "size_2_10"
+        },
+        {
+          "send_as": "lead_id",
+          "type": "column",
+          "source": [
+            "lead_id",
+            "row_key"
+          ],
+          "omit_if_blank": true
+        },
+        {
+          "send_as": "campaign",
+          "type": "column",
+          "source": "campaign",
+          "omit_if_blank": true
+        }
+      ],
+      "writeback": {
+        "enabled": true,
+        "campaign_type": "eco-size-micro"
+      },
+      "schedule": {
+        "enabled": false,
+        "cron": "0 0,30 8-17 * * *"
+      },
+      "auto_push": false
+    },
+    {
+      "id": "eco-size-small",
+      "name": "Practices 11-50 staff",
+      "note": "September WHO test, size arm B. STATE.md counts 541 rows.",
+      "enabled": false,
+      "priority": 11,
+      "tab": "Practices",
+      "fieldmap": "fieldmap.eco.json",
+      "rules": {
+        "all": [
+          {
+            "field": "status",
+            "op": "is_blank"
+          },
+          {
+            "field": "final_status",
+            "op": "is_blank"
+          },
+          {
+            "field": "send_gate",
+            "op": "equals",
+            "value": "yes"
+          },
+          {
+            "field": "employees",
+            "op": "between",
+            "value": [
+              11,
+              50
+            ]
+          }
+        ],
+        "none": [
+          {
+            "field": "a8om_contacted",
+            "op": "equals",
+            "value": "yes"
+          }
+        ]
+      },
+      "order": [
+        {
+          "field": "contact_source",
+          "order": [
+            "apollo_reveal",
+            "apollo_old",
+            "icypeas",
+            "pattern_mv"
+          ]
+        },
+        {
+          "field": "evidence_strength",
+          "order": [
+            "strong",
+            "medium",
+            "weak",
+            "none"
+          ]
+        },
+        {
+          "field": "trading_years",
+          "dir": "desc"
+        }
+      ],
+      "limits": {
+        "per_run": 50,
+        "per_day": 100,
+        "max_spend_usd": 1.0
+      },
+      "instantly": {
+        "campaign_id": "",
+        "blocklist_id": "",
+        "skip_if_in_workspace": false,
+        "skip_if_in_campaign": false,
+        "skip_if_in_list": true
+      },
+      "labels": [
+        {
+          "send_as": "Address",
+          "type": "column",
+          "source": [
+            "city",
+            "region",
+            "Address"
+          ],
+          "fallback": ""
+        },
+        {
+          "send_as": "trigger_family",
+          "type": "column",
+          "source": "trigger_family",
+          "fallback": "V0_volume"
+        },
+        {
+          "send_as": "evidence_source",
+          "type": "column",
+          "source": "evidence_source",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "evidence_strength",
+          "type": "column",
+          "source": "evidence_strength",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "contact_source",
+          "type": "column",
+          "source": "contact_source",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "verify_status",
+          "type": "column",
+          "source": "verify_status",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "seniority_tier",
+          "type": "derived",
+          "source": "seniority_tier",
+          "fallback": "unknown"
+        },
+        {
+          "send_as": "size_band",
+          "type": "derived",
+          "source": "size_band",
+          "fallback": "unknown"
+        },
+        {
+          "send_as": "Intent",
+          "type": "column",
+          "source": "Intent",
+          "fallback": "none"
+        },
+        {
+          "send_as": "evidence_ref",
+          "type": "column",
+          "source": "evidence_ref",
+          "omit_if_blank": true
+        },
+        {
+          "send_as": "test_arm",
+          "type": "fixed",
+          "value": "size_11_50"
+        },
+        {
+          "send_as": "lead_id",
+          "type": "column",
+          "source": [
+            "lead_id",
+            "row_key"
+          ],
+          "omit_if_blank": true
+        },
+        {
+          "send_as": "campaign",
+          "type": "column",
+          "source": "campaign",
+          "omit_if_blank": true
+        }
+      ],
+      "writeback": {
+        "enabled": true,
+        "campaign_type": "eco-size-small"
+      },
+      "schedule": {
+        "enabled": false,
+        "cron": "0 0,30 8-17 * * *"
+      },
+      "auto_push": false
+    },
+    {
+      "id": "eco-sen-owner",
+      "name": "Owners and leadership",
+      "note": "September WHO test, seniority arm A. STATE.md counts owner 893 + leadership 712. ⚠️ Do NOT enable this at the same time as the two size lanes - the size lanes have a lower priority number so they would claim the rows first and neither test would read.",
+      "enabled": false,
+      "priority": 20,
+      "tab": "Practices",
+      "fieldmap": "fieldmap.eco.json",
+      "rules": {
+        "all": [
+          {
+            "field": "status",
+            "op": "is_blank"
+          },
+          {
+            "field": "final_status",
+            "op": "is_blank"
+          },
+          {
+            "field": "send_gate",
+            "op": "equals",
+            "value": "yes"
+          },
+          {
+            "field": "seniority_rank",
+            "op": "in",
+            "value": [
+              "owner",
+              "leadership"
+            ]
+          }
+        ],
+        "none": [
+          {
+            "field": "a8om_contacted",
+            "op": "equals",
+            "value": "yes"
+          }
+        ]
+      },
+      "order": [
+        {
+          "field": "seniority_rank",
+          "order": [
+            "owner",
+            "leadership"
+          ]
+        },
+        {
+          "field": "contact_source",
+          "order": [
+            "apollo_reveal",
+            "apollo_old",
+            "icypeas",
+            "pattern_mv"
+          ]
+        },
+        {
+          "field": "trading_years",
+          "dir": "desc"
+        }
+      ],
+      "limits": {
+        "per_run": 50,
+        "per_day": 100,
+        "max_spend_usd": 1.0
+      },
+      "instantly": {
+        "campaign_id": "",
+        "blocklist_id": "",
+        "skip_if_in_workspace": false,
+        "skip_if_in_campaign": false,
+        "skip_if_in_list": true
+      },
+      "labels": [
+        {
+          "send_as": "Address",
+          "type": "column",
+          "source": [
+            "city",
+            "region",
+            "Address"
+          ],
+          "fallback": ""
+        },
+        {
+          "send_as": "trigger_family",
+          "type": "column",
+          "source": "trigger_family",
+          "fallback": "V0_volume"
+        },
+        {
+          "send_as": "evidence_source",
+          "type": "column",
+          "source": "evidence_source",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "evidence_strength",
+          "type": "column",
+          "source": "evidence_strength",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "contact_source",
+          "type": "column",
+          "source": "contact_source",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "verify_status",
+          "type": "column",
+          "source": "verify_status",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "seniority_tier",
+          "type": "derived",
+          "source": "seniority_tier",
+          "fallback": "unknown"
+        },
+        {
+          "send_as": "size_band",
+          "type": "derived",
+          "source": "size_band",
+          "fallback": "unknown"
+        },
+        {
+          "send_as": "test_arm",
+          "type": "fixed",
+          "value": "seniority_owner"
+        },
+        {
+          "send_as": "lead_id",
+          "type": "column",
+          "source": [
+            "lead_id",
+            "row_key"
+          ],
+          "omit_if_blank": true
+        },
+        {
+          "send_as": "campaign",
+          "type": "column",
+          "source": "campaign",
+          "omit_if_blank": true
+        }
+      ],
+      "writeback": {
+        "enabled": true,
+        "campaign_type": "eco-sen-owner"
+      },
+      "schedule": {
+        "enabled": false,
+        "cron": "0 0,30 8-17 * * *"
+      },
+      "auto_push": false
+    },
+    {
+      "id": "eco-sen-partner",
+      "name": "Partners",
+      "note": "September WHO test, seniority arm B. STATE.md counts 688 rows. Same warning as eco-sen-owner: run the seniority pair OR the size pair, never both.",
+      "enabled": false,
+      "priority": 21,
+      "tab": "Practices",
+      "fieldmap": "fieldmap.eco.json",
+      "rules": {
+        "all": [
+          {
+            "field": "status",
+            "op": "is_blank"
+          },
+          {
+            "field": "final_status",
+            "op": "is_blank"
+          },
+          {
+            "field": "send_gate",
+            "op": "equals",
+            "value": "yes"
+          },
+          {
+            "field": "seniority_rank",
+            "op": "in",
+            "value": [
+              "partner",
+              "specialist_partner",
+              "accountant_principal"
+            ]
+          }
+        ],
+        "none": [
+          {
+            "field": "a8om_contacted",
+            "op": "equals",
+            "value": "yes"
+          }
+        ]
+      },
+      "order": [
+        {
+          "field": "contact_source",
+          "order": [
+            "apollo_reveal",
+            "apollo_old",
+            "icypeas",
+            "pattern_mv"
+          ]
+        },
+        {
+          "field": "trading_years",
+          "dir": "desc"
+        }
+      ],
+      "limits": {
+        "per_run": 50,
+        "per_day": 100,
+        "max_spend_usd": 1.0
+      },
+      "instantly": {
+        "campaign_id": "",
+        "blocklist_id": "",
+        "skip_if_in_workspace": false,
+        "skip_if_in_campaign": false,
+        "skip_if_in_list": true
+      },
+      "labels": [
+        {
+          "send_as": "Address",
+          "type": "column",
+          "source": [
+            "city",
+            "region",
+            "Address"
+          ],
+          "fallback": ""
+        },
+        {
+          "send_as": "trigger_family",
+          "type": "column",
+          "source": "trigger_family",
+          "fallback": "V0_volume"
+        },
+        {
+          "send_as": "evidence_source",
+          "type": "column",
+          "source": "evidence_source",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "evidence_strength",
+          "type": "column",
+          "source": "evidence_strength",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "contact_source",
+          "type": "column",
+          "source": "contact_source",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "verify_status",
+          "type": "column",
+          "source": "verify_status",
+          "fallback": "unlabelled"
+        },
+        {
+          "send_as": "seniority_tier",
+          "type": "derived",
+          "source": "seniority_tier",
+          "fallback": "unknown"
+        },
+        {
+          "send_as": "size_band",
+          "type": "derived",
+          "source": "size_band",
+          "fallback": "unknown"
+        },
+        {
+          "send_as": "test_arm",
+          "type": "fixed",
+          "value": "seniority_partner"
+        },
+        {
+          "send_as": "lead_id",
+          "type": "column",
+          "source": [
+            "lead_id",
+            "row_key"
+          ],
+          "omit_if_blank": true
+        },
+        {
+          "send_as": "campaign",
+          "type": "column",
+          "source": "campaign",
+          "omit_if_blank": true
+        }
+      ],
+      "writeback": {
+        "enabled": true,
+        "campaign_type": "eco-sen-partner"
+      },
+      "schedule": {
+        "enabled": false,
+        "cron": "0 0,30 8-17 * * *"
+      },
+      "auto_push": false
+    }
+  ]
+}

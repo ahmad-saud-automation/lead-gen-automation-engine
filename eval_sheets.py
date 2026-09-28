@@ -46,31 +46,93 @@ def check_read_rejects_login_page():
 
 def check_writeback_row():
     result = {
-        "company": "Smith & Co", "selected_director": "Ian Smith",
+        "lead_id": "P-abc1234567",
+        "company": "Smith & Co", "contact_name": "Ian Smith",
         "found_email": "ian.smith@smithco.co.uk", "email_source": "pattern_first.last",
         "verification": "good", "icebreaker": "hello there",
-        "Oldest Director Name": "Ian Smith", "Oldest Director Email": "ian.smith@smithco.co.uk",
-        "Director 1 Name": "Ian Smith", "Director 1 Email": "ian.smith@smithco.co.uk",
-        "Director 1 Verification": "good",
+        "mv_date": "2026-08-31",
     }
     up = sheets.build_writeback_row(result, "pushed_to_instantly_pattern_first.last")
     assert up["Company Name"] == "Smith & Co"
     assert up["Status"] == up["Final Status"] == "pushed_to_instantly_pattern_first.last"
     assert up["Campaign Type"] == "director_main_campaign"
     assert up["Ice Breaker"] == "hello there"
-    assert up["Oldest Director Source"] == "pattern_first.last"
-    # every written key must be a recognised V7 column (or the match key)
+    assert up["Contact Name"] == "Ian Smith"
+    assert up["mv_date"] == "2026-08-31"
+    # a MillionVerifier PASS is what opens the send gate
+    assert up["send_ready"] == "yes", up
+    # every written key must be a recognised column (or one of the two match keys)
     for k in up:
-        assert k == "Company Name" or k in sheets.WRITEBACK_COLUMNS, k
+        assert k in ("Company Name", "lead_id") or k in sheets.WRITEBACK_COLUMNS, k
+
+
+def check_unverified_is_not_send_ready():
+    """A guessed address that MillionVerifier has not passed must never be sendable."""
+    up = sheets.build_writeback_row(
+        {"company": "X", "found_email": "a@b.com", "verification": "unknown"}, "s")
+    assert up["send_ready"] == "no", up
+
+    # ...but a lead that found NOTHING must not stamp send_ready at all. Writing "no"
+    # here would overwrite a "yes" the row already earned from an earlier verification,
+    # which is the same data-loss class as blanking Found Email. (changed 2026-09-06)
+    up = sheets.build_writeback_row({"company": "X", "found_email": ""}, "s")
+    assert "send_ready" not in up, up
+    assert up["Status"] == "s" and up["Final Status"] == "s", up
 
 
 def check_writeback_blank_director_has_no_source():
-    up = sheets.build_writeback_row({"company": "X", "email_source": "endole"}, "pushed_to_instantly_endole")
-    assert up["Director 1 Source"] == "" and up["Oldest Director Source"] == ""
+    """No contact and no email -> nothing is claimed, and contact 2 stays untouched.
+    Contact 2 is released BY HAND via verify_contact_2, never by the engine."""
+    up = sheets.build_writeback_row({"company": "X", "email_source": "endole"},
+                                    "pushed_to_instantly_endole")
+    # "nothing is claimed" is now expressed by leaving the key OUT rather than writing an
+    # empty string, because an empty string is a destructive write. (changed 2026-09-06)
+    assert "Contact Name" not in up and "Found Email" not in up, up
+    assert "Contact 2 Email" not in up, up
+    assert "send_ready" not in up, up
+    assert up["Status"] == "pushed_to_instantly_endole", up
+
+
+def check_a_failed_lead_never_erases_the_address_already_on_the_row():
+    """⛔ THE 2026-09-06 DATA-LOSS BUG. A live run wrote `Found Email: ""` for two leads it
+    failed to find, wiping two paid-for apollo_old addresses off the real sheet.
+
+    A failed search tells us our attempt failed. It tells us NOTHING about the address
+    already sitting on the row, so that row keeps everything it had."""
+    row = sheets.build_writeback_row(
+        {"company": "Acme", "row_key": "P-1", "found_email": "", "verification": "not_found",
+         "email_source": "", "icebreaker": "", "campaign_type": "eco-size-micro"},
+        "email_not_found")
+    assert row["Status"] == "email_not_found" and row["Final Status"] == "email_not_found"
+    assert row["Campaign Type"] == "eco-size-micro"
+    for destructive in ("Found Email", "Email Source", "Verification Status", "send_ready",
+                        "Ice Breaker", "Alternate Emails", "Contact 2 Email", "mv_date"):
+        assert destructive not in row, f"{destructive} would be blanked onto the sheet: {row}"
+
+
+def check_a_blank_is_never_written_over_anything():
+    """Rule 2: empty means 'we did not learn this', never 'delete what is there'."""
+    row = sheets.build_writeback_row(
+        {"company": "Acme", "row_key": "P-2", "found_email": "a@b.co.uk",
+         "verification": "ok", "email_source": "pattern_first",
+         "icebreaker": "", "alternate_emails": "", "mv_date": "", "contact_2_email": ""},
+        "pushed_to_instantly_pattern_first")
+    assert row["Found Email"] == "a@b.co.uk"
+    assert row["send_ready"] == "yes"
+    for blank in ("Ice Breaker", "Alternate Emails", "mv_date", "Contact 2 Email"):
+        assert blank not in row, f"{blank} is blank and must not be written: {row}"
+    assert all(str(v).strip() for v in row.values()), row
 
 
 CHECKS = [check_parse_url, check_export_url, check_read_csv_export,
-          check_read_rejects_login_page, check_writeback_row, check_writeback_blank_director_has_no_source]
+          check_read_rejects_login_page, check_writeback_row,
+          check_unverified_is_not_send_ready, check_writeback_blank_director_has_no_source,
+          check_a_failed_lead_never_erases_the_address_already_on_the_row,
+          check_a_blank_is_never_written_over_anything]
+
+
+def test_failed_lead_preserves_row(): check_a_failed_lead_never_erases_the_address_already_on_the_row()
+def test_no_blank_writes(): check_a_blank_is_never_written_over_anything()
 
 def test_parse(): check_parse_url()
 def test_export(): check_export_url()

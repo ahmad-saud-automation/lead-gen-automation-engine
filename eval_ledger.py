@@ -77,8 +77,122 @@ def check_stats_and_clear():
     assert led.stats()["total"] == 0
 
 
+# ── V2: two stages, and a key that survives duplicate company names ──
+
+def check_two_firms_with_the_same_name_do_not_block_each_other():
+    """THE V1 BUG. The key was the company name, and the Eco sheet has 132 duplicate
+    names over 264 rows, so one firm permanently blocked a different firm."""
+    led = _fresh()
+    a = {"lead_id": "P-aaa", "Company Name": "Smith & Co", "status": "email_found"}
+    b = {"lead_id": "P-bbb", "Company Name": "Smith & Co", "status": ""}
+    led.record(a)
+    assert led.is_done(a) is True
+    assert led.is_done(b) is False, "a different firm with the same name must NOT be blocked"
+
+
+def check_enriched_is_not_pushed():
+    """THE OTHER V1 BUG. A lead that found an email but ran out of quota was marked
+    terminal and never sent. Enrich and push are separate stages now."""
+    led = _fresh()
+    row = {"lead_id": "P-1", "company": "A", "status": "email_found",
+           "found_email": "a@a.com"}
+    led.record(row)
+    assert led.is_done(row, stage="enrich") is True      # never re-verify: no double spend
+    assert led.is_done(row, stage="push") is False       # but it is still owed a send
+    pend = led.pending_push()
+    assert len(pend) == 1 and pend[0]["email"] == "a@a.com", pend
+    led.record_push(row)
+    assert led.is_done(row, stage="push") is True
+    assert led.pending_push() == []
+
+
+def check_daily_counts_are_per_stage_and_per_campaign():
+    led = _fresh()
+    for i in range(3):
+        led.record({"lead_id": f"P-{i}", "status": "email_found"}, campaign="micro")
+    for i in range(2):
+        led.record({"lead_id": f"Q-{i}", "status": "email_found"}, campaign="small")
+    led.record_push({"lead_id": "P-0", "status": "pushed"}, campaign="micro")
+    assert led.count_today("enrich") == 5
+    assert led.count_today("enrich", campaign="micro") == 3
+    assert led.count_today("enrich", campaign="small") == 2
+    assert led.count_today("push") == 1
+    assert led.count_today("push", day="1999-01-01") == 0
+
+
+def check_key_prefers_lead_id_over_company_name():
+    from core.ledger import key_of
+    from core.fieldmap import FieldMap
+    row = {"lead_id": "P-xyz", "Company Name": "Smith & Co"}
+    assert key_of(row) == "p-xyz"
+    fm = FieldMap({"row_key": "Reg Number"})
+    assert key_of({"Reg Number": "  12345678 ", "Company Name": "X"}, fm) == "12345678"
+    assert key_of({"Company Name": "Only Name"}) == "only name"   # V1 rows still work
+    assert key_of({}) == ""
+
+
+def check_a_v1_json_ledger_is_migrated_not_lost():
+    import json
+    from pathlib import Path
+    import tempfile
+    from core.ledger import Ledger
+    d = Path(tempfile.mkdtemp())
+    old = d / "ledger.json"
+    old.write_text(json.dumps({
+        "alpha ltd": {"company": "Alpha Ltd", "status": "email_found",
+                      "email": "a@alpha.co.uk", "pushed": True},
+        "beta ltd": {"company": "Beta Ltd", "status": "email_not_found", "pushed": False},
+    }), encoding="utf-8")
+    led = Ledger(old)                                  # .json path -> .db, migrate once
+    assert led.path.suffix == ".db", led.path
+    assert led.is_done({"row_key": "alpha ltd"}, stage="push") is True
+    assert led.is_done({"row_key": "beta ltd"}, stage="enrich") is True
+    assert not old.exists() and (d / "ledger.json.migrated").exists()
+
+
+def check_a_test_run_records_nothing():
+    """Found while driving the UI: a test-mode run was writing its SIMULATED results into
+    the ledger, which would have skipped 50 real firms forever behind an address nobody
+    ever checked. The guard lives here so no call site can forget it."""
+    led = _fresh()
+    row = {"lead_id": "P-1", "company": "A", "status": "email_found", "found_email": "a@a.com"}
+    assert led.record(row, test_mode=True) == ""
+    assert led.record(row, pushed=True, test_mode=True) == ""
+    assert led.is_done(row, stage="enrich") is False
+    assert led.is_done(row, stage="push") is False
+    assert led.stats()["total"] == 0
+    led.record(row)                                    # a real run still records
+    assert led.is_done(row, stage="enrich") is True
+
+
+def check_clear_can_target_one_stage():
+    led = _fresh()
+    row = {"lead_id": "P-1", "status": "email_found"}
+    led.record(row, pushed=True)
+    assert led.is_done(row, stage="push") is True
+    led.clear(stage="push")
+    assert led.is_done(row, stage="push") is False
+    assert led.is_done(row, stage="enrich") is True     # enrichment untouched
+
+
 CHECKS = [check_records_and_skips, check_every_terminal_status_sticks, check_retry_not_found,
-          check_pushed_never_retried, check_persists_and_key_is_normalised, check_stats_and_clear]
+          check_pushed_never_retried, check_persists_and_key_is_normalised, check_stats_and_clear,
+          check_two_firms_with_the_same_name_do_not_block_each_other,
+          check_enriched_is_not_pushed, check_daily_counts_are_per_stage_and_per_campaign,
+          check_key_prefers_lead_id_over_company_name,
+          check_a_v1_json_ledger_is_migrated_not_lost, check_a_test_run_records_nothing,
+          check_clear_can_target_one_stage]
+
+
+def test_test_mode_records_nothing(): check_a_test_run_records_nothing()
+
+
+def test_same_name(): check_two_firms_with_the_same_name_do_not_block_each_other()
+def test_stages(): check_enriched_is_not_pushed()
+def test_daily(): check_daily_counts_are_per_stage_and_per_campaign()
+def test_key(): check_key_prefers_lead_id_over_company_name()
+def test_migrate(): check_a_v1_json_ledger_is_migrated_not_lost()
+def test_clear_stage(): check_clear_can_target_one_stage()
 
 def test_records(): check_records_and_skips()
 def test_terminal(): check_every_terminal_status_sticks()

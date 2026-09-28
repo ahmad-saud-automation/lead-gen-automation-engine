@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+/* Dark mode is driven by a `.dark` class on <html>, toggled in the header and
+   remembered in localStorage. */
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #fbfcfd;
+  --border: #e4e7ec;
+  --border-strong: #d3d8e0;
+  --foreground: #0d1526;
+  --muted: #667085;
+  --faint: #98a2b3;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-soft: #eff4ff;
+  --primary-foreground: #ffffff;
+  --success: #17864a;
+  --success-soft: #e7f6ed;
+  --warning: #b54708;
+  --warning-soft: #fef4e6;
+  --danger: #b42318;
+  --danger-soft: #fdeceb;
+  --accent: #f1f3f7;
+  --ring: #93b4fb;
+}
+
+.dark {
+  --background: #0a0e15;
+  --surface: #121722;
+  --surface-2: #161c29;
+  --border: #232b3a;
+  --border-strong: #303a4d;
+  --foreground: #e6e9ef;
+  --muted: #8d99ad;
+  --faint: #6b7688;
+  --primary: #3b82f6;
+  --primary-hover: #60a5fa;
+  --primary-soft: #16233c;
+  --primary-foreground: #ffffff;
+  --success: #4ade80;
+  --success-soft: #12261a;
+  --warning: #fbbf24;
+  --warning-soft: #2a1f0d;
+  --danger: #f87171;
+  --danger-soft: #2a1415;
+  --accent: #1a2130;
+  --ring: #2b4a86;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-accent: var(--accent);
+  --color-ring: var(--ring);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Menlo, monospace;
+}
+
+* { border-color: var(--border); }
+
+html, body, #root { height: 100%; }
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbars that do not shout on a dense dashboard */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+  border: 3px solid var(--background);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--faint); }
+
+/* Numbers line up in tables when every digit is the same width */
+.tabular { font-variant-numeric: tabular-nums; }
+
+@keyframes fadein { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+.animate-in { animation: fadein .16s ease-out; }
+
+@keyframes slidein { from { transform: translateX(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+.animate-drawer { animation: slidein .18s cubic-bezier(.22,.8,.3,1); }
+
+@keyframes pulsering { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.animate-live { animation: pulsering 1.4s ease-in-out infinite; }

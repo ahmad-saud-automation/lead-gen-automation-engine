@@ -40,8 +40,14 @@ from core import icebreaker as icebreaker_mod  # noqa: E402
 from core import instantly as instantly_mod  # noqa: E402
 from core import sheets as sheets_mod  # noqa: E402
 from core import ledger as ledger_mod  # noqa: E402
+from core import net as net_mod  # noqa: E402
+from core import fieldmap as fieldmap_mod  # noqa: E402
+from core import campaigns as campaigns_mod  # noqa: E402
+from core import runner as runner_mod  # noqa: E402
+from core import rules as rules_mod  # noqa: E402
 
 WEBAPP_DIR = Path(__file__).resolve().parent
+CONFIG_DIR = ROOT / "config"
 DATA = ROOT / "data"
 RUNS_DIR = DATA / "runs"
 UPLOADS_DIR = DATA / "uploads"
@@ -87,6 +93,9 @@ DEFAULT_CONFIG = {
     "push_delay_seconds": 3,                 # V7 waits 3s between pushes
     "sheet_url": "", "sheet_tab": "Combined",
     "sheet_service_account_file": "", "sheet_writeback": False,
+    # {tab name: local .csv path} - read a snapshot instead of the live sheet, so a
+    # campaign can be tested with no credentials. Every screen says when this is on.
+    "local_tabs": {},
     "strict_status": True,          # blank Status = process, anything written = done
     "api_tries": 3,                 # V7 parity: retry each API call 3x…
     "api_retry_wait": 5.0,          # …5s apart, backing off on 429 / 5xx / timeouts
@@ -165,10 +174,13 @@ def _attach_v7_fields(rows: list[dict], firms: list[dict]) -> None:
         }
     for f in firms:
         meta = info.get(organize_mod._norm_company(f.get("company_key", "")), {})
-        endole = meta.get("endole", "")
+        # organize() now fills these from the field map, so only overwrite when this
+        # lookup actually found something — otherwise a blank here would erase it
+        endole = meta.get("endole", "") or f.get("lead_endole_email", "")
         f["lead_endole_email"] = endole
         f["endole_generic"] = organize_mod.is_generic_email(endole) if endole else False
-        f["email_security_gateway_provider"] = meta.get("gateway", "")
+        f["email_security_gateway_provider"] = (meta.get("gateway", "")
+                                                or f.get("email_security_gateway_provider", ""))
 
 
 def firm_status_label(firm: dict) -> str:
@@ -250,6 +262,11 @@ def _run_record(job: dict) -> dict:
         "event_count": job["_seq"], "results": job["results"], "cfg_rates": job["rates"],
         "skipped_done": job.get("skipped_done", 0),
         "kind": job.get("kind", "run"), "source_run": job.get("source_run"),
+        # which lane this run belonged to. It must survive to disk: the push reads it back
+        # to find the campaign's target id, labels and options.
+        "campaign": job.get("campaign", ""), "campaign_name": job.get("campaign_name", ""),
+        "selection": job.get("selection"),
+        "held_not_send_ready": job.get("held_not_send_ready", 0),
     }
 
 
@@ -297,8 +314,8 @@ def _openai_echo(text: str, api_key: str, model: str = "gpt-4o-mini") -> str:
         ],
     }).encode()
     req = urllib.request.Request(OPENAI_URL, data=payload, method="POST",
-                                 headers={"Content-Type": "application/json",
-                                          "Authorization": "Bearer " + api_key})
+                                 headers=net_mod.headers({"Content-Type": "application/json",
+                                                          "Authorization": "Bearer " + api_key}))
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             data = json.loads(r.read().decode("utf-8", "replace"))
@@ -307,7 +324,7 @@ def _openai_echo(text: str, api_key: str, model: str = "gpt-4o-mini") -> str:
         return ""
 
 
-def _worker(run_id: str, firms: list[dict], cfg: dict) -> None:
+def _worker(run_id: str, firms: list[dict], cfg: dict, *, campaign=None, fm=None) -> None:
     job = JOBS[run_id]
     key = _mv_key(cfg)
     test_mode = job["test_mode"]
@@ -375,8 +392,19 @@ def _worker(run_id: str, firms: list[dict], cfg: dict) -> None:
 
     # V7 logged no_website / email_not_found straight back to the sheet - do the same,
     # live, so those leads are never re-verified on a later run.
-    write_row = _open_sheet_writer(cfg, emit)
+    # ⛔ A TEST RUN TOUCHES NO PRODUCTION STATE. Same rule as the ledger: its addresses
+    # and verdicts are invented, so it must never stamp a status onto the real sheet.
+    # (The push worker already skips its writer in test mode; this is the run's half.)
+    write_row = None
+    if test_mode:
+        emit("", "sheet", "skip", "test mode - the sheet is never written")
+    else:
+        write_row = _open_sheet_writer(cfg, emit, tab=(campaign.tab if campaign else ""), fm=fm)
     led = ledger_mod.Ledger(LEDGER_FILE) if cfg.get("use_ledger", True) else None
+    camp_id = campaign.id if campaign else ""
+    # only translate column names when the map actually knows the sheet's key column,
+    # otherwise the writer is still matching rows on Company Name (V1 behaviour)
+    use_map = fm is not None and bool(fm.header("row_key"))
 
     for firm in firms:
         if job.get("cancel"):
@@ -384,18 +412,25 @@ def _worker(run_id: str, firms: list[dict], cfg: dict) -> None:
         row = pipeline_mod.process_firm(firm, cfg, verify_email, emit,
                                         find_icypeas=find_icypeas, find_anymail=find_anymail,
                                         make_icebreaker=make_icebreaker)
+        # the pipeline result knows nothing about the sheet it came from — carry the
+        # identity and campaign across so the ledger, the labels and the write-back all
+        # key on the SAME row
+        for k in ("row_key", "lead_id", "campaign", "campaign_type", "seniority_label", "_raw"):
+            if firm.get(k) not in (None, ""):
+                row.setdefault(k, firm[k])
         job["results"].append(row)
         job["processed"] += 1
         bucket = TALLY.get(row["status"])
         if bucket:
             job["counters"][bucket] += 1
+        # a test run marks nothing as handled — the ledger enforces that itself
         if led:
-            led.record(row)
-            led.save()
+            led.record(row, fm=fm, campaign=camp_id, test_mode=test_mode)
         # found leads keep a blank sheet status until the push writes pushed_to_instantly_*
         if write_row and row["status"] in ("no_website", "email_not_found", "hold_security_gateway"):
             try:
-                w = write_row(sheets_mod.build_writeback_row(row, row["status"]))
+                up = sheets_mod.build_writeback_row(row, row["status"])
+                w = write_row(sheets_mod.to_sheet_row(up, fm) if use_map else up)
                 if w.get("ok"):
                     job["counters"]["written_back"] += 1
                     emit(row.get("company", ""), "sheet", "success", f"Status → {row['status']} (row {w['row']})")
@@ -457,8 +492,12 @@ def start_run(test_mode: bool) -> dict:
     return _snapshot(job)
 
 
-def _open_sheet_writer(cfg: dict, emit) -> object | None:
-    """One live row-writer for the configured sheet, or None (with a reason emitted)."""
+def _open_sheet_writer(cfg: dict, emit, *, tab: str = "", fm=None) -> object | None:
+    """One live row-writer for the configured sheet, or None (with a reason emitted).
+
+    With a field map the writer matches rows on the sheet's OWN key column (lead_id) and
+    is allowed to write only the headers that map resolves — never a guessed name, whose
+    write Google Sheets would discard in silence."""
     if not cfg.get("sheet_writeback"):
         return None
     sa = str(cfg.get("sheet_service_account_file") or "").strip()
@@ -466,9 +505,15 @@ def _open_sheet_writer(cfg: dict, emit) -> object | None:
     if not (sa and parsed["doc_id"]):
         emit("", "sheet", "skip", "write-back needs a service-account file + sheet URL")
         return None
+    key_col, allowed = "Company Name", None
+    if fm is not None and fm.header("row_key"):
+        key_col = fm.header("row_key")
+        allowed = sheets_mod.writeback_headers(fm)
     try:
-        w = sheets_mod.SheetsClient(sa).open_writer(parsed["doc_id"], cfg.get("sheet_tab") or "Combined")
-        emit("", "sheet", "info", "live write-back ready")
+        w = sheets_mod.SheetsClient(sa).open_writer(
+            parsed["doc_id"], tab or cfg.get("sheet_tab") or "Combined",
+            key_column=key_col, allowed=allowed)
+        emit("", "sheet", "info", f"live write-back ready (key: {key_col})")
         return w
     except Exception as e:  # noqa: BLE001
         emit("", "sheet", "fail", f"write-back unavailable: {e}")
@@ -519,14 +564,290 @@ def load_leads_from_sheet() -> dict:
     return _leads_view(payload)
 
 
+# ── campaigns: many lanes off one sheet ──────────────────────────────
+
+def tab_source(cfg: dict, tab: str) -> dict:
+    """Where a tab's rows come from, so the UI can say so out loud.
+
+    A local CSV always wins when one is configured. That is deliberate — it lets a
+    campaign be tested with no credentials at all — but it reads a SNAPSHOT, not the live
+    sheet, so it must never be silently in effect."""
+    local = str((cfg.get("local_tabs") or {}).get(tab) or "").strip()
+    if local:
+        return {"kind": "local_csv", "path": local, "live": False}
+    sa = str(cfg.get("sheet_service_account_file") or "").strip()
+    if sa:
+        return {"kind": "service_account", "path": "", "live": True}
+    return {"kind": "link_export", "path": "", "live": True}
+
+
+def _read_tab(cfg: dict, tab: str) -> list[dict]:
+    """Raw rows from ONE tab. A service account can address a tab by name; the
+    no-credentials CSV export only reaches the tab the URL's gid points at. A local CSV
+    configured in `local_tabs` overrides both, for offline testing."""
+    local = str((cfg.get("local_tabs") or {}).get(tab) or "").strip()
+    if local:
+        p = Path(local)
+        if not p.exists():
+            raise ValueError(f"local_tabs points '{tab}' at {p}, which does not exist")
+        return _rows_from_csv_bytes(p.read_bytes())
+    parsed = sheets_mod.parse_sheet_url(cfg.get("sheet_url", ""))
+    if not parsed["doc_id"]:
+        raise ValueError("No Google Sheet URL set in Settings.")
+    sa = str(cfg.get("sheet_service_account_file") or "").strip()
+    if sa:
+        return sheets_mod.SheetsClient(sa).read(parsed["doc_id"], tab)
+    return sheets_mod.read_via_csv_export(parsed["doc_id"], parsed["gid"])
+
+
+def campaigns_view() -> dict:
+    """Every campaign, plus any config problem that would stop a run."""
+    loaded = runner_mod.load_config_dir(CONFIG_DIR)
+    camps = loaded["campaigns"]
+    return {
+        "globals": loaded["globals"],
+        "issues": campaigns_mod.validate(camps),
+        "campaigns": [{
+            "id": c.id, "name": c.name, "enabled": c.enabled, "priority": c.priority,
+            "tab": c.tab, "fieldmap": c.fieldmap,
+            "per_run": c.per_run, "per_day": c.per_day,
+            "max_spend_usd": c.max_spend_usd,
+            "instantly_campaign_id": c.instantly_campaign_id,
+            "labels": len(c.labels), "auto_push": c.auto_push,
+            "label_issues": instantly_mod.validate_label_specs(c.labels or None),
+        } for c in camps],
+    }
+
+
+def build_plan(*, enabled_only: bool = True) -> dict:
+    """The free preview: what each campaign WOULD take. No API call, no spend."""
+    cfg = load_config()
+    loaded = runner_mod.load_config_dir(CONFIG_DIR)
+    lanes = [c for c in loaded["campaigns"] if c.enabled or not enabled_only]
+    if not lanes:
+        return {"campaigns": [], "total_take": 0, "globals": loaded["globals"],
+                "warnings": ["no campaign is enabled"], "fieldmaps": {}, "config_issues": []}
+
+    rows_by_tab, fieldmaps, reports, errors = {}, {}, {}, []
+    sources = {}
+    for tab in sorted({c.tab for c in lanes if c.tab}):
+        sources[tab] = tab_source(cfg, tab)
+        try:
+            rows = _read_tab(cfg, tab)
+        except Exception as e:  # noqa: BLE001 — a bad tab must not hide the other tabs
+            errors.append(f"could not read tab '{tab}': {e}")
+            continue
+        rows_by_tab[tab] = rows
+        heads = runner_mod.headers_of(rows)
+        lane = next((c for c in lanes if c.tab == tab), None)
+        fm = runner_mod.fieldmap_for(lane, loaded["fieldmaps"], heads)
+        fieldmaps[tab] = fm
+        reports[tab] = runner_mod.check_fieldmap(fm, heads)
+
+    led = ledger_mod.Ledger(LEDGER_FILE) if cfg.get("use_ledger", True) else None
+    rep = campaigns_mod.plan(rows_by_tab, lanes, fieldmaps, ledger=led,
+                             globals_cfg=loaded["globals"],
+                             mv_rate_usd=float(cfg.get("mv_per_verification_usd", 0) or 0))
+    rep["fieldmaps"] = reports
+    rep["sources"] = sources
+    rep["config_issues"] = campaigns_mod.validate(loaded["campaigns"])
+    rep["warnings"] = (rep.get("warnings") or []) + errors
+    return rep
+
+
+def _read_campaigns_raw() -> dict:
+    return _read_json(CONFIG_DIR / "campaigns.json", {"globals": {}, "campaigns": []})
+
+
+def _write_campaigns_raw(body: dict) -> dict:
+    """Validate, keep one backup, then write. A config file is never replaced by a broken
+    one — the engine would refuse to run and the previous state would be gone."""
+    camps = [campaigns_mod.Campaign(c) for c in (body.get("campaigns") or [])]
+    issues = campaigns_mod.validate(camps)
+    for c in camps:
+        issues += [{"campaign": c.id, "issue": f"labels: {i}"}
+                   for i in instantly_mod.validate_label_specs(c.labels or None)]
+    if issues:
+        return {"ok": False, "issues": issues}
+    path = CONFIG_DIR / "campaigns.json"
+    if path.exists():
+        (CONFIG_DIR / "campaigns.backup.json").write_text(
+            path.read_text(encoding="utf-8"), encoding="utf-8")
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"ok": True, "campaigns": len(camps)}
+
+
+def save_campaign(patch: dict) -> dict:
+    """Update ONE campaign in place, leaving every other key in the file untouched."""
+    cid = str(patch.get("id") or "").strip()
+    if not cid:
+        return {"ok": False, "issues": [{"campaign": "", "issue": "no campaign id given"}]}
+    body = _read_campaigns_raw()
+    rows = body.get("campaigns") or []
+    idx = next((i for i, c in enumerate(rows) if str(c.get("id")) == cid), -1)
+    if idx < 0:
+        return {"ok": False, "issues": [{"campaign": cid, "issue": "no such campaign"}]}
+    merged = {**rows[idx]}
+    for k, v in patch.items():
+        if k != "id":
+            merged[k] = v
+    rows[idx] = merged
+    body["campaigns"] = rows
+    out = _write_campaigns_raw(body)
+    out["campaign"] = cid
+    return out
+
+
+def save_globals(patch: dict) -> dict:
+    body = _read_campaigns_raw()
+    body["globals"] = {**(body.get("globals") or {}), **patch}
+    return _write_campaigns_raw(body)
+
+
+def fieldmap_detail(tab: str = "") -> dict:
+    """Everything the mapping screen needs: the engine's fields, what they are mapped to
+    today, the sheet's real headers, and how full each column actually is.
+
+    Fill rate matters — mapping to a column that is 0% filled looks correct and silently
+    does nothing."""
+    cfg = load_config()
+    loaded = runner_mod.load_config_dir(CONFIG_DIR)
+    lane = next((c for c in loaded["campaigns"] if not tab or c.tab == tab), None)
+    if not lane:
+        return {"error": f"No campaign uses tab '{tab}'."}
+    try:
+        rows = _read_tab(cfg, lane.tab)
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"Could not read tab '{lane.tab}': {e}"}
+
+    heads = runner_mod.headers_of(rows)
+    sample = rows[:500]
+    fill = {h: (sum(1 for r in sample if str(r.get(h) or "").strip()) * 100 //
+                max(1, len(sample))) for h in heads}
+    saved = loaded["fieldmaps"].get(lane.fieldmap or "") or fieldmap_mod.FieldMap({})
+    auto = fieldmap_mod.suggest(heads)
+    check = runner_mod.check_fieldmap(saved.completed(heads), heads)
+
+    fields = []
+    for f in fieldmap_mod.FIELDS:
+        name = f["name"]
+        mapped = saved.header(name)
+        fields.append({
+            "field": name, "direction": f["dir"], "required": f["required"],
+            "recommended": name in fieldmap_mod.RECOMMENDED,
+            "note": f.get("note", ""), "aliases": f["aliases"][:4],
+            "mapped": mapped, "suggested": auto.get(name, ""),
+            "resolved": check["resolved"].get(name, ""),
+            "fill": fill.get(mapped or check["resolved"].get(name, ""), None),
+        })
+    used = {v for v in check["resolved"].values()}
+    return {"tab": lane.tab, "file": lane.fieldmap, "rows": len(rows),
+            "source": tab_source(cfg, lane.tab),
+            "headers": [{"name": h, "fill": fill[h], "used": h in used} for h in heads],
+            "fields": fields, "check": check, "preview": rows[:5]}
+
+
+def save_fieldmap(name: str, mapping: dict) -> dict:
+    fname = (name or "").strip() or "fieldmap.json"
+    if not fname.endswith(".json") or "/" in fname or "\\" in fname:
+        return {"ok": False, "error": "field-map name must be a plain .json filename"}
+    path = CONFIG_DIR / fname
+    body = _read_json(path, {})
+    body["name"] = body.get("name") or fname
+    body["mapping"] = {str(k): str(v) for k, v in (mapping or {}).items() if str(v).strip()}
+    if path.exists():
+        (CONFIG_DIR / (fname[:-5] + ".backup.json")).write_text(
+            path.read_text(encoding="utf-8"), encoding="utf-8")
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"ok": True, "file": fname, "mapped": len(body["mapping"])}
+
+
+def start_campaign_run(campaign_id: str, *, test_mode: bool = True) -> dict:
+    """Enrich one campaign's next batch. The push is still a separate, confirmed step."""
+    cfg = load_config()
+    loaded = runner_mod.load_config_dir(CONFIG_DIR)
+    camp = next((c for c in loaded["campaigns"] if c.id == campaign_id), None)
+    if not camp:
+        return {"error": f"No campaign '{campaign_id}' in config/campaigns.json."}
+    if not camp.enabled:
+        return {"error": f"Campaign '{campaign_id}' is disabled. Enable it in config/campaigns.json."}
+
+    problems = [i["issue"] for i in campaigns_mod.validate([camp])]
+    if problems:
+        return {"error": "Campaign config problem: " + "; ".join(problems)}
+
+    try:
+        rows = _read_tab(cfg, camp.tab)
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"Could not read tab '{camp.tab}': {e}"}
+
+    heads = runner_mod.headers_of(rows)
+    fm = runner_mod.fieldmap_for(camp, loaded["fieldmaps"], heads)
+    check = runner_mod.check_fieldmap(fm, heads)
+    if not check["ok"]:
+        return {"error": "Field map problem: " + "; ".join(check["blocking"])}
+
+    led = ledger_mod.Ledger(LEDGER_FILE) if cfg.get("use_ledger", True) else None
+    prep = runner_mod.prepare(camp, rows, fm, ledger=led, cfg=cfg)
+    firms = prep["firms"]
+    if not firms:
+        return {"error": f"'{campaign_id}' has no rows to work on right now "
+                         f"({prep['matched']} matched, {prep['blocked_by_ledger']} already done, "
+                         f"{prep['day_remaining']} left in today's limit)."}
+
+    run_id = uuid.uuid4().hex[:12]
+    job = {
+        "run_id": run_id, "status": "running", "test_mode": bool(test_mode), "stage": "organize",
+        "campaign": camp.id, "campaign_name": camp.name,
+        "total": len(firms), "processed": 0, "results": [], "events": [], "_seq": 0,
+        "counters": _new_counters(),
+        "rates": {"mv_per_verification_usd": cfg.get("mv_per_verification_usd", 0.0),
+                  "anymailfinder_usd_per_credit": cfg.get("anymailfinder_usd_per_credit", 0.0),
+                  "icypeas_usd_per_credit": cfg.get("icypeas_usd_per_credit", 0.0)},
+        "started": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "cancel": False,
+        "skipped_done": prep["blocked_by_ledger"], "selection": {
+            k: prep[k] for k in ("matched", "blocked_by_ledger", "available",
+                                 "day_remaining", "selected")},
+    }
+    JOBS[run_id] = job
+    _persist(job)
+    threading.Thread(target=_worker, args=(run_id, firms, cfg),
+                     kwargs={"campaign": camp, "fm": fm}, daemon=True).start()
+    return _snapshot(job)
+
+
 # ── Instantly push (outward-facing: gated by confirm + test mode) ────
 
-def _push_worker(push_id: str, rows: list[dict], cfg: dict) -> None:
+ACCEPTED_VERIFICATIONS = {"good", "ok", "valid", "deliverable", "verified"}
+
+
+def _is_send_ready(row: dict) -> bool:
+    """THE SEND GATE: `send_ready = yes`, or a verification that actually passed.
+
+    Only a MillionVerifier PASS opens it. An address a finder merely thought was
+    'probable' has an email but no pass, and must never be sent."""
+    if str(row.get("send_ready") or "").strip().lower() == "yes":
+        return True
+    if str(row.get("send_ready") or "").strip().lower() == "no":
+        return False
+    ver = str(row.get("verification") or row.get("Verification Status") or "").strip().lower()
+    return ver in ACCEPTED_VERIFICATIONS
+
+
+def _push_worker(push_id: str, rows: list[dict], cfg: dict, *, camp=None, fm=None) -> None:
     import time
     job = JOBS[push_id]
     test_mode = job["test_mode"]
     key = str(cfg.get("instantly_api_key", "")).strip()
-    campaign = str(cfg.get("instantly_campaign_id", "")).strip()
+    # the campaign's own Instantly id wins; the single config id is the V1 fallback
+    campaign = (camp.instantly_campaign_id if camp else "") or \
+        str(cfg.get("instantly_campaign_id", "")).strip()
+    labels = (camp.labels or None) if camp else None
+    options = runner_mod.push_options(camp) if camp else None
+    camp_id = camp.id if camp else ""
+    use_map = fm is not None and bool(fm.header("row_key"))
     delay = max(0, min(int(cfg.get("push_delay_seconds", 3) or 0), 60))
     writeback = bool(cfg.get("sheet_writeback"))
     write_row, pending = None, []
@@ -544,15 +865,27 @@ def _push_worker(push_id: str, rows: list[dict], cfg: dict) -> None:
     # one live sheet writer, so each pushed lead updates its Status row immediately
     # (same behaviour as n8n's per-item "Update Sheet" node)
     if not test_mode:
-        write_row = _open_sheet_writer(cfg, emit)
+        write_row = _open_sheet_writer(cfg, emit, tab=(camp.tab if camp else ""), fm=fm)
     led = ledger_mod.Ledger(LEDGER_FILE) if cfg.get("use_ledger", True) else None
+
+    # global daily send ceiling, across every campaign — the mailbox limit, not a
+    # per-campaign one, so one lane cannot quietly eat the whole day's capacity
+    loaded_globals = runner_mod.load_config_dir(CONFIG_DIR)["globals"]
+    day_cap = int(loaded_globals.get("daily_push_cap") or 0)
+    sent_today = led.count_today("push") if (led and day_cap and not test_mode) else 0
 
     for row in rows:
         if job.get("cancel"):
             break
+        if day_cap and not test_mode and sent_today >= day_cap:
+            emit("", "push", "skip",
+                 f"global daily cap reached ({day_cap}) - stopping, the rest stay queued")
+            break
         company = row.get("company", "")
         res = instantly_mod.push_lead(
-            row, campaign, key, test_mode=test_mode,
+            runner_mod.label_source_row(row) if camp else row,
+            campaign, key, test_mode=test_mode,
+            labels=labels, fm=fm, options=options,
             tries=max(1, int(cfg.get("api_tries", 3) or 1)),
             retry_wait=float(cfg.get("api_retry_wait", 5.0) or 0),
             on_retry=lambda a, n, e, p: emit(company, "push", "retry",
@@ -564,12 +897,15 @@ def _push_worker(push_id: str, rows: list[dict], cfg: dict) -> None:
             job["counters"]["pushed"] += 1
             emit(company, "push", "success",
                  f"{row.get('found_email', '')} → campaign{' (test)' if test_mode else ''}", row.get("found_email", ""))
+            sent_today += 1
             job["results"].append({**row, "status": res["status"], "pushed": True})
+            # same rule as the run: a dry run never records a real send
             if led:
-                led.record({**row, "status": res["status"]}, pushed=True)
-                led.save()
+                led.record({**row, "status": res["status"]}, pushed=True, fm=fm,
+                           campaign=camp_id, test_mode=test_mode)
             if writeback:
                 up = sheets_mod.build_writeback_row(row, res["status"])
+                up = sheets_mod.to_sheet_row(up, fm) if use_map else up
                 if write_row:
                     try:
                         w = write_row(up)                    # live: one row, right now
@@ -599,7 +935,10 @@ def _push_worker(push_id: str, rows: list[dict], cfg: dict) -> None:
         if sa and parsed["doc_id"]:
             try:
                 out = sheets_mod.SheetsClient(sa).update_statuses(
-                    parsed["doc_id"], cfg.get("sheet_tab") or "Combined", pending)
+                    parsed["doc_id"],
+                    (camp.tab if camp else "") or cfg.get("sheet_tab") or "Combined", pending,
+                    key_column=(fm.header("row_key") if use_map else "Company Name"),
+                    allowed=(sheets_mod.writeback_headers(fm) if use_map else None))
                 job["counters"]["written_back"] += out.get("updated", 0)
                 emit("", "sheet", "success", f"retried {out.get('updated', 0)} queued rows")
             except Exception as e:  # noqa: BLE001
@@ -621,14 +960,39 @@ def start_push(run_id: str = "", *, test_mode: bool = True, confirm: bool = Fals
     snap = get_run(run_id) if run_id else latest_run(kind="run")
     if not snap:
         return {"error": "No run to push. Do a Live run first."}
-    rows = [r for r in snap.get("results", []) if r.get("found_email")]
-    if not rows:
+
+    # the campaign this run belonged to, if any — it carries the target id, the label
+    # table and the Instantly options
+    camp, fm = None, None
+    camp_id = str(snap.get("campaign") or "").strip()
+    if camp_id:
+        loaded = runner_mod.load_config_dir(CONFIG_DIR)
+        camp = next((c for c in loaded["campaigns"] if c.id == camp_id), None)
+        if camp is None:
+            return {"error": f"This run belonged to campaign '{camp_id}', which is no longer "
+                             "in config/campaigns.json. Restore it before pushing."}
+        fm = loaded["fieldmaps"].get(camp.fieldmap or "")
+
+    found = [r for r in snap.get("results", []) if r.get("found_email")]
+    if not found:
         return {"error": "That run has no verified emails to push."}
+    # THE SEND GATE. Only a verification PASS may be sent. V1 pushed anything with an
+    # address, which is how an unverified Icypeas "probable" would have gone out.
+    rows = [r for r in found if _is_send_ready(r)]
+    held = len(found) - len(rows)
+    if not rows:
+        return {"error": f"None of the {len(found)} addresses passed verification, so none "
+                         "are send-ready. Nothing was pushed."}
+
     if not test_mode:
         if not str(cfg.get("instantly_api_key", "")).strip():
             return {"error": "Add your Instantly API key in Settings before a live push."}
-        if not str(cfg.get("instantly_campaign_id", "")).strip():
-            return {"error": "Add your Instantly campaign id in Settings before a live push."}
+        target = (camp.instantly_campaign_id if camp else "") or \
+            str(cfg.get("instantly_campaign_id", "")).strip()
+        if not target:
+            return {"error": ("Campaign '%s' has no instantly.campaign_id in "
+                              "config/campaigns.json." % camp.id) if camp else
+                             "Add your Instantly campaign id in Settings before a live push."}
     push_id = uuid.uuid4().hex[:12]
     job = {
         "run_id": push_id, "kind": "push", "source_run": snap.get("run_id"),
@@ -640,9 +1004,12 @@ def start_push(run_id: str = "", *, test_mode: bool = True, confirm: bool = Fals
                   "icypeas_usd_per_credit": cfg.get("icypeas_usd_per_credit", 0.0)},
         "started": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "cancel": False,
     }
+    job["campaign"] = camp.id if camp else ""
+    job["held_not_send_ready"] = held
     JOBS[push_id] = job
     _persist(job)
-    threading.Thread(target=_push_worker, args=(push_id, rows, cfg), daemon=True).start()
+    threading.Thread(target=_push_worker, args=(push_id, rows, cfg),
+                     kwargs={"camp": camp, "fm": fm}, daemon=True).start()
     return _snapshot(job)
 
 
@@ -791,9 +1158,44 @@ async def no_cache(request: Request, call_next):
     return resp
 
 
+# The V2 interface is a built React app in webapp/dist. The V1 interface is untouched and
+# stays reachable at /legacy — it is the fallback if anything about the new one misbehaves.
+DIST = WEBAPP_DIR / "dist"
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
+    built = DIST / "index.html"
+    if built.exists():
+        return built.read_text(encoding="utf-8")
+    # not built yet: say so plainly rather than 404-ing, and offer the old interface
+    return (
+        "<body style=\"font:15px system-ui;max-width:38rem;margin:12vh auto;padding:0 1.5rem;"
+        "line-height:1.6\"><h1>Interface not built yet</h1>"
+        "<p>The V2 interface lives in <code>ui/</code> and builds into "
+        "<code>webapp/dist</code>. Build it once with:</p>"
+        "<pre style=\"background:#f4f5f7;padding:.8rem 1rem;border-radius:.5rem\">"
+        "cd ui\nnpm install\nnpm run build</pre>"
+        "<p><code>start-app.bat</code> does this for you automatically.</p>"
+        "<p><a href=\"/legacy\">Open the original interface instead &rarr;</a></p></body>"
+    )
+
+
+@app.get("/legacy", response_class=HTMLResponse)
+def legacy_index():
+    """The V1 interface, kept working so there is always a way back."""
     return (WEBAPP_DIR / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/assets/{name}")
+def dist_asset(name: str):
+    """Built JS/CSS. The name is resolved inside dist and must stay inside it."""
+    p = (DIST / "assets" / name).resolve()
+    if not str(p).startswith(str((DIST / "assets").resolve())) or not p.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    kind = {".js": "application/javascript", ".css": "text/css", ".map": "application/json",
+            ".svg": "image/svg+xml", ".woff2": "font/woff2"}.get(p.suffix, "application/octet-stream")
+    return FileResponse(p, media_type=kind)
 
 
 @app.get("/style.css")
@@ -1024,19 +1426,41 @@ def api_sheets_load():
 
 @app.get("/api/push/preview")
 def api_push_preview(run_id: str = ""):
-    """What a push would send - shown for confirmation BEFORE anything goes out."""
+    """What a push would send - shown for confirmation BEFORE anything goes out.
+
+    Campaign-aware: it previews the lane's OWN target id, its label table and its Instantly
+    options, and it applies the same send gate the push does, so what you see here is
+    exactly what would leave the machine."""
     cfg = load_config()
     snap = get_run(run_id) if run_id else latest_run(kind="run")
     if not snap:
         return {"status": "none", "ready": 0, "leads": []}
-    rows = [r for r in snap.get("results", []) if r.get("found_email")]
-    campaign = str(cfg.get("instantly_campaign_id", "")).strip()
+
+    camp, fm, labels, options = None, None, None, None
+    camp_id = str(snap.get("campaign") or "").strip()
+    if camp_id:
+        loaded = runner_mod.load_config_dir(CONFIG_DIR)
+        camp = next((c for c in loaded["campaigns"] if c.id == camp_id), None)
+        if camp:
+            fm = loaded["fieldmaps"].get(camp.fieldmap or "")
+            labels = camp.labels or None
+            options = runner_mod.push_options(camp)
+
+    found = [r for r in snap.get("results", []) if r.get("found_email")]
+    rows = [r for r in found if _is_send_ready(r)]
+    campaign = (camp.instantly_campaign_id if camp else "") or \
+        str(cfg.get("instantly_campaign_id", "")).strip()
     return {
         "run_id": snap.get("run_id"), "ready": len(rows),
+        "found": len(found), "held_not_send_ready": len(found) - len(rows),
+        "campaign": camp_id, "campaign_name": snap.get("campaign_name") or "",
         "has_key": bool(str(cfg.get("instantly_api_key", "")).strip()),
         "campaign_id": campaign, "delay": cfg.get("push_delay_seconds", 3),
         "writeback": bool(cfg.get("sheet_writeback")),
-        "leads": [instantly_mod.build_payload(r, campaign or "<campaign id not set>") for r in rows[:25]],
+        "leads": [instantly_mod.build_payload(
+            runner_mod.label_source_row(r) if camp else r,
+            campaign or "<campaign id not set>",
+            labels=labels, fm=fm, options=options) for r in rows[:25]],
     }
 
 
@@ -1052,10 +1476,7 @@ async def api_push_start(request: Request):
 def api_ledger():
     led = ledger_mod.Ledger(LEDGER_FILE)
     s = led.stats()
-    s["recent"] = sorted(({"company": v.get("company"), "status": v.get("status"),
-                           "email": v.get("email"), "pushed": v.get("pushed"), "when": v.get("when")}
-                          for v in led.entries.values()),
-                         key=lambda r: r.get("when") or "", reverse=True)[:25]
+    s["recent"] = led.recent(25)
     return s
 
 
@@ -1133,6 +1554,80 @@ async def api_schedule_create(request: Request):
 @app.post("/api/schedule/delete")
 def api_schedule_delete():
     return schedule_delete()
+
+
+# ── campaigns ────────────────────────────────────────────────────────
+
+@app.get("/api/campaigns")
+def api_campaigns():
+    return campaigns_view()
+
+
+@app.get("/api/plan")
+def api_plan(all: bool = False):
+    """The free preview. Reads the sheet and applies the rules; spends nothing."""
+    return build_plan(enabled_only=not all)
+
+
+@app.get("/api/fieldmap")
+def api_fieldmap(tab: str = ""):
+    """Validate a tab's field map against the sheet's real header, before any spend."""
+    cfg = load_config()
+    loaded = runner_mod.load_config_dir(CONFIG_DIR)
+    lane = next((c for c in loaded["campaigns"] if not tab or c.tab == tab), None)
+    if not lane:
+        return {"error": f"No campaign uses tab '{tab}'."}
+    try:
+        rows = _read_tab(cfg, lane.tab)
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"Could not read tab '{lane.tab}': {e}"}
+    heads = runner_mod.headers_of(rows)
+    fm = runner_mod.fieldmap_for(lane, loaded["fieldmaps"], heads)
+    out = runner_mod.check_fieldmap(fm, heads)
+    out.update({"tab": lane.tab, "rows": len(rows), "mapping": fm.to_dict()})
+    return out
+
+
+@app.get("/api/campaigns/detail")
+def api_campaign_detail(id: str):
+    """The raw config for one campaign — what the editor drawer loads."""
+    body = _read_campaigns_raw()
+    row = next((c for c in (body.get("campaigns") or []) if str(c.get("id")) == id), None)
+    if row is None:
+        return {"error": f"No campaign '{id}'."}
+    c = campaigns_mod.Campaign(row)
+    return {"campaign": row, "issues": campaigns_mod.validate([c]),
+            "label_issues": instantly_mod.validate_label_specs(c.labels or None),
+            "operators": sorted(rules_mod.OPS), "value_less": sorted(rules_mod.VALUE_LESS),
+            "derived": sorted(instantly_mod.DERIVED), "label_types": list(instantly_mod.LABEL_TYPES)}
+
+
+@app.post("/api/campaigns/save")
+async def api_campaign_save(request: Request):
+    return save_campaign(await request.json())
+
+
+@app.post("/api/campaigns/globals")
+async def api_campaign_globals(request: Request):
+    return save_globals(await request.json())
+
+
+@app.get("/api/fieldmap/detail")
+def api_fieldmap_detail(tab: str = ""):
+    return fieldmap_detail(tab)
+
+
+@app.post("/api/fieldmap/save")
+async def api_fieldmap_save(request: Request):
+    b = await request.json()
+    return save_fieldmap(str(b.get("file") or ""), b.get("mapping") or {})
+
+
+@app.post("/api/campaign/run")
+async def api_campaign_run(request: Request):
+    b = await request.json()
+    return start_campaign_run(str(b.get("campaign") or ""),
+                              test_mode=bool(b.get("test_mode", True)))
 
 
 if __name__ == "__main__":

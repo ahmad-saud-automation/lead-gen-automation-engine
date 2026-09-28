@@ -45,7 +45,60 @@ def check_payload_shape():
     assert p["skip_if_in_workspace"] is False
     assert p["skip_if_in_campaign"] is False
     assert p["skip_if_in_list"] is True
-    assert p["custom_variables"] == {"Address": "London"}
+    # Address, as V7 sent it, plus the five decision-agent labels. A row with no
+    # labels must still send a value for every one of them: the agent counts
+    # 'unlabelled' as a real group but a blank silently vanishes from every GROUP BY.
+    assert p["custom_variables"] == {
+        "Address": "London",
+        "trigger_family": "V0_volume",
+        "evidence_source": "unlabelled",
+        "evidence_strength": "unlabelled",
+        "contact_source": "unlabelled",
+        "verify_status": "unlabelled",
+        "seniority_tier": "unknown",
+        "size_band": "unknown",
+    }, p["custom_variables"]
+
+
+def check_labels_travel_to_instantly():
+    """The five labels + lead_id + campaign must reach Instantly, or the decision
+    agent cannot tell a working trigger from a working list."""
+    row = dict(ROW, trigger_family="A1_hiring", evidence_source="beacon",
+               evidence_strength="strong", contact_source="pattern_mv",
+               verify_status="valid", lead_id="P-abc1234567",
+               campaign="Eco-P2-find-email")
+    cv = instantly.build_payload(row, CAMPAIGN)["custom_variables"]
+    assert cv["trigger_family"] == "A1_hiring", cv
+    assert cv["evidence_source"] == "beacon", cv
+    assert cv["evidence_strength"] == "strong", cv
+    assert cv["contact_source"] == "pattern_mv", cv
+    assert cv["verify_status"] == "valid", cv
+    assert cv["lead_id"] == "P-abc1234567", cv
+    assert cv["campaign"] == "Eco-P2-find-email", cv
+
+
+def check_derived_labels():
+    """seniority_tier and size_band are DERIVED at push time, never stored as sheet
+    columns, so the same fact is not written twice."""
+    r = dict(ROW, seniority_label="leadership", Employees="6")
+    cv = instantly.build_payload(r, CAMPAIGN)["custom_variables"]
+    assert cv["seniority_tier"] == "owner", cv
+    assert cv["size_band"] == "micro_1_10", cv
+    r = dict(ROW, seniority_label="statutory_director", Employees="35")
+    cv = instantly.build_payload(r, CAMPAIGN)["custom_variables"]
+    assert cv["seniority_tier"] == "partner_director", cv
+    assert cv["size_band"] == "small_11_plus", cv
+    assert instantly.size_band("") == "unknown"
+    assert instantly.seniority_tier("do_not_contact") == "other"
+
+
+def check_contact_name_is_read():
+    """The sheet renamed Selected Director -> Contact Name. If this ever stops working
+    every push loses the greeting name."""
+    r = {k: v for k, v in ROW.items() if k != "selected_director"}
+    r["Contact Name"] = "ian hamish smith"
+    p = instantly.build_payload(r, CAMPAIGN)
+    assert p["first_name"] == "Ian" and p["last_name"] == "Smith", p
 
 
 def check_pushed_status():
@@ -71,12 +124,17 @@ def check_push_error_is_non_fatal():
     assert r["ok"] is False and "instantly down" in r["error"]
 
 
-CHECKS = [check_clean_icebreaker, check_display_name, check_payload_shape, check_pushed_status,
+CHECKS = [check_clean_icebreaker, check_display_name, check_payload_shape,
+          check_labels_travel_to_instantly, check_derived_labels,
+          check_contact_name_is_read, check_pushed_status,
           check_push_test_mode, check_push_needs_email_and_campaign, check_push_error_is_non_fatal]
 
 def test_clean(): check_clean_icebreaker()
 def test_name(): check_display_name()
 def test_payload(): check_payload_shape()
+def test_labels(): check_labels_travel_to_instantly()
+def test_derived(): check_derived_labels()
+def test_contact_name(): check_contact_name_is_read()
 def test_status(): check_pushed_status()
 def test_push(): check_push_test_mode()
 def test_guards(): check_push_needs_email_and_campaign()
