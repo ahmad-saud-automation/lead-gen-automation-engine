@@ -1,6 +1,42 @@
 # STATE — Lead Gen Automation Engine
 
-Handoff so a new session does not re-explore. **Last updated 2026-09-04.**
+Handoff so a new session does not re-explore. **Last updated 2026-09-29.**
+
+---
+
+## ▶ IN PROGRESS — V3: moving the screens to Next.js (branch `nextjs-ui`)
+
+Goal: same look, layout, fonts and UI as **YT Dashboard (A8OM View)** and **Icebreaker Studio**.
+**Only the screens move.** Python (`core/`, `webapp/server.py`, 33 `/api/*` routes, the tests)
+is untouched. The rollback point is commit `5420410` on `main` (V2 snapshot).
+
+| | |
+|---|---|
+| Template | `..\icebreaker-studio\web` — Next 15.5.26, React 19.1.1, TypeScript, plain CSS, no Tailwind |
+| Theme | `web/app/globals.css` = Icebreaker's copy, **unchanged. Never edit it for a look** — add to `web/app/leadgen.css` |
+| Ports | screens **3200** (YT = 3000, Icebreaker = 3100), engine stays **8771** |
+| Wiring | `web/next.config.mjs` rewrites `/api/*`, `/v2` (the V2 React screens), `/assets/*`, `/legacy`, `/style.css`, `/app.js` to Python. Browser code uses relative paths only |
+| Deps | `web/node_modules` → `C:\ClaudeDeps\leadgen-web\node_modules`, `web/.next` → `C:\ClaudeDeps\leadgen-web\next-build` (junctions) |
+| Start | `start-web.bat` (engine if not running + build once + `next start`). `start-web.bat rebuild` after editing `web\`. `start-app.bat` still serves V2 on 8771 |
+| Icons | Tabler path data in `web/components/icons.tsx`; add from `unpkg.com/@tabler/icons@3.47.0/icons/outline/<name>.svg` |
+
+API rule carried from V2: the engine answers **200 with `{error}`** for expected problems.
+`lib/client-api.ts` throws only when the engine cannot answer; each screen checks `.error`.
+
+### Phases
+
+| Phase | Status |
+|---|---|
+| 1. Scaffold: layout, sidebar (Pipeline / Setup groups), TopBar, `ui.tsx`, icons, client API, **Plan preview ported** | ✅ done 2026-09-29. `next build` clean; Plan verified on real Eco data (4 lanes, 128 leads, $0.46); phone width checked |
+| 2. Port the rest: Field map → Settings → Campaigns + `CampaignDrawer` → Runs (polling, cancel, push, downloads). Add `lib/nav.ts` + `saved-note.tsx` from Icebreaker with the first save (reload-after-save; see Icebreaker's `lib/nav.ts` for why) | ⏳ next. Unported pages show a "Not moved yet" card linking to `/v2#/<page>` |
+| 3. Make `start-app.bat` start both, parity check against V2 screen by screen, then archive `ui/` + `build-ui.bat` | ⏳ |
+
+Not carried over: V2's dark-mode toggle. The shared theme is light only, deliberately (see the
+header of `globals.css`).
+
+⚠️ **This profile (`ahmad saud`) has no `C:\ClaudeDeps\leadgen-venv`**, and `requirements.txt`
+lacks the Google libraries, so `docpipeline-venv` starts the engine but cannot read the sheet.
+`.claude/launch.json` borrows `ytdash-venv` (has fastapi + google libs) for previews only.
 
 ---
 

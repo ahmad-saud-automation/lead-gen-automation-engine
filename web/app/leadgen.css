@@ -1,0 +1,53 @@
+/* ---------------------------------------------------------------------------
+   Lead Gen Engine's own styles.
+
+   globals.css is the shared theme, copied unchanged from Icebreaker Studio
+   (which has it from A8OM View). Never edit it to change a look here: add to
+   this file, or change the token in globals.css and say so.
+   --------------------------------------------------------------------------- */
+
+/* Blocks on a page sit one gap apart, like the cards in a band. */
+.stack > * + * {
+  margin-top: var(--gap);
+}
+
+/* A band of plain figures, not charts: the theme's 248px rows are sized for a
+   tile carrying a chart and leave these half empty. */
+.band.stats {
+  grid-auto-rows: auto;
+}
+
+/* The row of controls under a card's explanation. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+/* A campaign's id under its name in a table: what the config file calls it. */
+.lane-id {
+  display: block;
+  font-family: var(--fm);
+  font-size: 10.5px;
+  color: var(--faint);
+  padding-top: 2px;
+}
+
+.faint {
+  color: var(--faint);
+}
+
+.errorbox code,
+.muted code {
+  font-family: var(--fm);
+  font-size: 12px;
+}
+
+/* A screen still served by the previous interface while it is moved across. */
+.not-moved {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+}

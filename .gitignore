@@ -19,5 +19,10 @@ venv/
 ui/node_modules/
 webapp/dist/
 
+# Next.js screens: node_modules and .next are junctions into C:\ClaudeDeps\leadgen-web
+web/node_modules
+web/.next
+web/tsconfig.tsbuildinfo
+
 # written automatically before any config change, so the previous version survives
 config/*.backup.json
