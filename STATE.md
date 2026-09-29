@@ -18,7 +18,8 @@ maximum functionality and ease" (design left to us), dark mode last using V2's c
 | D | Settings: all 14 missing keys + suppression lists + local-files editor + "V1 screens only" card | no | ✅ round trip identical (39 settings) |
 | E | **Ice breakers = Icebreaker Studio's line only** (user's choice). Lanes read the sheet's mapped `Ice Breaker` column (`runner.sheet_icebreaker`) and never generate; the push RE-READS the live tab (`_lane_icebreakers` → `runner.refresh_icebreakers`) because Studio may write after the run; leads with no line are held (`hold_without_icebreaker`, default on, in Settings); write-back never writes `Ice Breaker` for lanes (`build_writeback_row(write_icebreaker=False)`). V1 `/legacy` flow unchanged. No template editor | yes | ✅ 2 new checks in `eval_runner`, 1 in `eval_sheets`; verified live: run `df18c6944e49` → 2 waiting, 0 ready, dry run refused with the reason |
 | F | Import — design below | yes | ⏳ next session |
-| G | Per-campaign schedules — design below. User asked "add both (Windows + in-app)?"; advised **Windows Task Scheduler only** (it runs whether or not the app is open, so an in-app one adds nothing but double-run risk). Confirm with the user before building | yes | ⏳ next session |
+| G | Per-campaign schedules — design below. **User chose BOTH (in-app + Windows)** because the app will be uploaded to a server, where Windows Task Scheduler may not exist | yes | ⏳ next session |
+| I | **Server deployment** — design below. Not started; ask the user which server first | yes | ⏳ after F + G |
 
 ### F — Import (user: "maximum functionality and ease"; wants both CSV upload and sheet tab)
 - Engine: `POST /api/imports/upload` (multipart CSV) → saved to `data/imports/<slug>.csv` (gitignored)
@@ -36,19 +37,50 @@ maximum functionality and ease" (design left to us), dark mode last using V2's c
   list of imports (rows, date, which lanes read it), preview + stats, "Create a lane for it"
   (opens `NewCampaign` with the tab preset).
 
-### G — Per-campaign schedules (Windows Task Scheduler)
+### G — Per-campaign schedules (in-app AND Windows Task Scheduler — user chose both)
 - `Campaign.schedule` already exists in `core/campaigns.py`, unused. Shape:
-  `{enabled, kind: minute|hourly|daily|weekly, every, start, end, days[], test_mode}`.
-- Reuse V1's tested `_schedule_args` / `schtasks` code (see `eval_schedule.py`); one task per
-  lane named `LeadGen-<id>`; `scheduled_run.py --campaign <id>` → `start_campaign_run` +
-  `wait_for_job`, then push only if the lane has `auto_push`.
-- Endpoints: `GET/POST /api/campaigns/schedule` (create/update/remove the Windows task and
-  keep `campaigns.json` in step). Removing a lane removes its task.
+  `{enabled, via: app|windows, kind: minute|hourly|daily|weekly, every, start, end, days[], test_mode}`.
+- **One lane = one trigger.** `via` picks which one fires it, so a lane never runs twice.
+  Default `app` (works on any server, Linux included); `windows` is offered only when the engine
+  runs on Windows (`os.name == "nt"`), otherwise the option is disabled with the reason.
+- **In-app**: one daemon thread started on FastAPI startup, ticks every 30 s, computes each
+  lane's next due time from the shape above, and fires `start_campaign_run` (+ push if
+  `auto_push`). Last fire per lane kept in `data/schedule_state.json` so a restart neither
+  double-fires nor replays missed runs (missed = skipped, logged). Runs only while the engine
+  runs — on a server that is always.
+- **Windows**: reuse V1's tested `_schedule_args` / `schtasks` code (see `eval_schedule.py`);
+  one task per lane named `LeadGen-<id>`; `scheduled_run.py --campaign <id>` →
+  `start_campaign_run` + `wait_for_job`, then push only if the lane has `auto_push`.
+- Endpoints: `GET/POST /api/campaigns/schedule` (save the schedule; for `windows` also
+  create/update/remove the task). Switching `via` removes the other trigger. Removing a lane
+  removes its task.
 - Guards already exist: daily send/spend caps; a lane already running is refused.
-- UI: a Schedule tab in the campaign editor; "Next run" column on Campaigns.
+- UI: a Schedule tab in the campaign editor ("Runs in the app" / "Runs from Windows" choice);
+  "Next run" column on Campaigns and on the Dashboard.
+- Tests: next-due maths (every kind, days, start/end window), no double fire across a restart,
+  `via` switch removes the other trigger (schtasks faked, as in `eval_schedule.py`).
+
+### I — Server deployment (user: "I will upload this app to a server")
+Must be solved before it goes on a server — today the app assumes it is on your own PC:
+- **No login.** Anyone who can reach the URL could start runs (spends credits), push leads to
+  Instantly, read API keys' last 4 chars, clear the ledger. Needs a login (single password
+  set in `data/config.json`, session cookie checked in Next middleware + the engine) or,
+  at minimum, a reverse proxy with basic auth.
+- Engine binds `127.0.0.1:8771` and is reached only through Next's rewrites — keep that; expose
+  only the web app, behind HTTPS (Caddy or nginx).
+- `start-app.bat` is Windows-only: add `start-app.sh` + a `systemd` unit (or a Dockerfile) for
+  Linux.
+- Secrets: `data/config.json` and the Google service-account file are gitignored — they must be
+  copied to the server by hand, never committed.
+- **Ask the user first:** which server (Linux VPS? Windows VPS? which provider?) and whether
+  others will use it.
 | H | Dark mode: V2's dark palette mapped onto the theme tokens in `leadgen.css` (`:root[data-theme="dark"]`), toggle at the foot of the sidebar + in the phone menu, saved as `leadgen:theme`, applied before paint by `app/layout.tsx` | no | ✅ |
 
-Work is on branch **`v4`** (not committed yet at time of writing).
+Work is on branch **`v4`**: A–E + H committed (`44e8ea7`, `767e9c0`), main merged in (`1496c0a`).
+**v4 goes into `main` only when F and G are done and tested** (user left it to us), then push.
+`main` = `4b21dd1`, pushed to origin 2026-09-29 (V3 + Google libs in `requirements.txt`; engine
+venv is `C:\ClaudeDeps\leadgen-venv`, shared Python 3.14, used by `start-app.bat` and
+`.claude/launch.json`).
 Verifying in the hidden browser pane: CSS transitions never finish there (no frames), so a
 computed colour right after a change can be stale — read it with `transition: none`.
 
