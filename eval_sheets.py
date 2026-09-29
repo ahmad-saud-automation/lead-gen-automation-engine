@@ -64,6 +64,10 @@ def check_writeback_row():
     # every written key must be a recognised column (or one of the two match keys)
     for k in up:
         assert k in ("Company Name", "lead_id") or k in sheets.WRITEBACK_COLUMNS, k
+    # a campaign lane never writes the Ice Breaker column: it is Icebreaker Studio's
+    lane = sheets.build_writeback_row(result, "pushed_to_instantly_x", write_icebreaker=False)
+    assert "Ice Breaker" not in lane, lane
+    assert lane["Found Email"] == "ian.smith@smithco.co.uk"
 
 
 def check_unverified_is_not_send_ready():

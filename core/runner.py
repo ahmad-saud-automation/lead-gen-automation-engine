@@ -134,6 +134,42 @@ def label_source_row(firm: dict) -> dict:
     return merged
 
 
+# ───────────────────── ice breakers: Icebreaker Studio's line only ─────────────────────
+#
+# Decided 2026-09-29: a campaign lane never writes an ice breaker. Icebreaker Studio writes
+# one into the sheet's Ice Breaker column, and the lane sends exactly that. Before this the
+# engine built its own template line, sent it instead, and write-back then overwrote
+# Studio's line in the sheet. The V1 single-campaign flow (/legacy) is unchanged: its CSV
+# uploads have no Studio column.
+
+def sheet_icebreaker(row: dict, fm) -> str:
+    """Icebreaker Studio's line for this lead, from the sheet row underneath it."""
+    raw = row.get("_raw") or row
+    col = (fm.header("icebreaker") if fm else "") or "Ice Breaker"
+    return str(raw.get(col) or "").strip()
+
+
+def refresh_icebreakers(rows: list[dict], sheet_rows: list[dict], fm) -> list[dict]:
+    """Each result with the line the sheet holds NOW, matched on the row key.
+
+    Studio may write a line after the enrichment run, so a push re-reads the sheet rather
+    than trusting what the run saw. A lead the sheet no longer has keeps the run's line."""
+    key_col = (fm.header("row_key") if fm else "") or "lead_id"
+    now = {str(r.get(key_col) or "").strip(): r for r in sheet_rows if str(r.get(key_col) or "").strip()}
+    out = []
+    for r in rows:
+        live = now.get(str(r.get("row_key") or r.get("lead_id") or "").strip())
+        line = sheet_icebreaker(live, fm) if live is not None else str(r.get("icebreaker") or "").strip()
+        out.append({**r, "icebreaker": line, "ice_style": "studio" if line else ""})
+    return out
+
+
+def split_by_icebreaker(rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(has a Studio line, waiting for one)."""
+    ready = [r for r in rows if str(r.get("icebreaker") or "").strip()]
+    return ready, [r for r in rows if not str(r.get("icebreaker") or "").strip()]
+
+
 def push_options(campaign) -> dict:
     """The Instantly API options this campaign wants — blocklist_id and the skip flags
     included, which V1 never sent."""

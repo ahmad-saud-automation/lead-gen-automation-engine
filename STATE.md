@@ -16,9 +16,36 @@ maximum functionality and ease" (design left to us), dark mode last using V2's c
 | B | Dashboard home `/` + History `/history` | no | ✅ |
 | C | Results (on each run's page, expandable rows) + Log `/log` (filter, search, run picker, CSV) | no | ✅ |
 | D | Settings: all 14 missing keys + suppression lists + local-files editor + "V1 screens only" card | no | ✅ round trip identical (39 settings) |
-| E | **Ice breaker source.** Found 2026-09-29: the engine IGNORES the sheet's `Ice Breaker` column that Icebreaker Studio fills, builds its own template line, and write-back then OVERWRITES Studio's line in the sheet (`core/sheets.py build_writeback_row`, `core/pipeline.py` step 6). Proposed: use the sheet's line when present, templates only as fallback, never overwrite. **Waiting for the user's OK** — it changes what is sent. No template editor in V4 (Studio owns ice breakers) | yes | ⏳ asked |
-| F | Import: upload a CSV (or load a tab) → preview + organise stats → it becomes a source a lane can read (build on `local_tabs`); write-back off for file sources. Needs a short design pass | yes | ⏳ |
-| G | Per-campaign schedules (V2's planned Phase 3; `Campaign.schedule` exists but nothing reads it; `scheduled_run.py` only runs the OLD single-campaign flow). Needs a design pass | yes | ⏳ |
+| E | **Ice breakers = Icebreaker Studio's line only** (user's choice). Lanes read the sheet's mapped `Ice Breaker` column (`runner.sheet_icebreaker`) and never generate; the push RE-READS the live tab (`_lane_icebreakers` → `runner.refresh_icebreakers`) because Studio may write after the run; leads with no line are held (`hold_without_icebreaker`, default on, in Settings); write-back never writes `Ice Breaker` for lanes (`build_writeback_row(write_icebreaker=False)`). V1 `/legacy` flow unchanged. No template editor | yes | ✅ 2 new checks in `eval_runner`, 1 in `eval_sheets`; verified live: run `df18c6944e49` → 2 waiting, 0 ready, dry run refused with the reason |
+| F | Import — design below | yes | ⏳ next session |
+| G | Per-campaign schedules — design below. User asked "add both (Windows + in-app)?"; advised **Windows Task Scheduler only** (it runs whether or not the app is open, so an in-app one adds nothing but double-run risk). Confirm with the user before building | yes | ⏳ next session |
+
+### F — Import (user: "maximum functionality and ease"; wants both CSV upload and sheet tab)
+- Engine: `POST /api/imports/upload` (multipart CSV) → saved to `data/imports/<slug>.csv` (gitignored)
+  and registered in `local_tabs` as tab `import:<slug>`; returns headers, row count, first 10
+  rows and organise stats (duplicates, suppressed, already in the ledger). `GET /api/imports`,
+  `POST /api/imports/delete` (unregisters; keeps the file unless asked).
+- Sheet tab: preview any tab by name with the same stats (lanes already read tabs directly).
+- **Write-back off for file sources**: `_worker` / `_push_worker` skip `_open_sheet_writer` when
+  `tab_source(cfg, tab)["kind"] == "local_csv"`, and say so in the feed.
+- A CSV without an `Ice Breaker` column means every lead is held (E) — the Import page must say
+  so and offer the Settings switch.
+- Field map page: a tab picker (`fieldmap_detail(tab)` already takes one) so an import's
+  columns can be mapped.
+- UI: `/import` in the Pipeline group (icon `upload` is already in `icons.tsx`): drop zone,
+  list of imports (rows, date, which lanes read it), preview + stats, "Create a lane for it"
+  (opens `NewCampaign` with the tab preset).
+
+### G — Per-campaign schedules (Windows Task Scheduler)
+- `Campaign.schedule` already exists in `core/campaigns.py`, unused. Shape:
+  `{enabled, kind: minute|hourly|daily|weekly, every, start, end, days[], test_mode}`.
+- Reuse V1's tested `_schedule_args` / `schtasks` code (see `eval_schedule.py`); one task per
+  lane named `LeadGen-<id>`; `scheduled_run.py --campaign <id>` → `start_campaign_run` +
+  `wait_for_job`, then push only if the lane has `auto_push`.
+- Endpoints: `GET/POST /api/campaigns/schedule` (create/update/remove the Windows task and
+  keep `campaigns.json` in step). Removing a lane removes its task.
+- Guards already exist: daily send/spend caps; a lane already running is refused.
+- UI: a Schedule tab in the campaign editor; "Next run" column on Campaigns.
 | H | Dark mode: V2's dark palette mapped onto the theme tokens in `leadgen.css` (`:root[data-theme="dark"]`), toggle at the foot of the sidebar + in the phone menu, saved as `leadgen:theme`, applied before paint by `app/layout.tsx` | no | ✅ |
 
 Work is on branch **`v4`** (not committed yet at time of writing).

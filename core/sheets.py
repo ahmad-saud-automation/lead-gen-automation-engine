@@ -222,8 +222,11 @@ class SheetsClient:
         return {"ok": True, "updated": updated, "cells": len(data), "not_found": missing}
 
 
-def build_writeback_row(result: dict, status: str) -> dict:
+def build_writeback_row(result: dict, status: str, *, write_icebreaker: bool = True) -> dict:
     """One result row -> the sheet update payload.
+
+    `write_icebreaker=False` for campaign lanes: the Ice Breaker column belongs to
+    Icebreaker Studio, and the engine must never write over its line (decided 2026-09-29).
 
     Matches docs/15-google-sheet-architecture.md. `send_ready` is the send gate: only a
     MillionVerifier PASS sets it to yes, so an address that was merely guessed can never
@@ -271,8 +274,9 @@ def build_writeback_row(result: dict, status: str) -> dict:
         "mv_date": result.get("mv_date", ""),
         "Alternate Emails": result.get("alternate_emails", ""),
         "Campaign Type": result.get("campaign_type", "director_main_campaign"),
-        "Ice Breaker": result.get("icebreaker", ""),
+        "Ice Breaker": result.get("icebreaker", "") if write_icebreaker else "",
         "Contact 2 Email": result.get("contact_2_email", ""),
     }
     # rule 2: never write a blank over something that is already there
+    # (which is also what keeps Studio's line: a blank Ice Breaker is dropped here)
     return {k: v for k, v in row.items() if str(v or "").strip() != ""}

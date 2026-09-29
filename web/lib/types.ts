@@ -245,6 +245,10 @@ export type PushPreview = {
   status?: string;
   ready: number;
   held_not_send_ready?: number;
+  /** Lanes only: send-ready leads whose sheet row has no Icebreaker Studio line yet. */
+  waiting_icebreaker?: number;
+  waiting_companies?: string[];
+  icebreaker_note?: string;
   delay?: number;
   has_key?: boolean;
   campaign_id?: string;

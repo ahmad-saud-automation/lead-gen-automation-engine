@@ -105,11 +105,15 @@ DEFAULT_CONFIG = {
     "use_ledger": True,             # skip leads already handled in a previous run
     "retry_not_found": False,       # let email_not_found leads back in on later runs
     "icebreaker_templates": {},     # edited copy from the Icebreaker tab (blank = defaults)
+    # campaign lanes send Icebreaker Studio's line only; a lead whose sheet row has none yet
+    # is held back from the push instead of going out unpersonalised
+    "hold_without_icebreaker": True,
 }
 _BOOL_KEYS = {"use_endole", "verify_endole_with_mf", "use_patterns", "use_icypeas",
               "use_anymailfinder", "verify_icypeas_with_mf", "verify_anymailfinder_with_mf",
               "use_icebreaker", "use_openai_echo", "accept_catchall", "block_security_gateways",
-              "sheet_writeback", "strict_status", "use_ledger", "retry_not_found"}
+              "sheet_writeback", "strict_status", "use_ledger", "retry_not_found",
+              "hold_without_icebreaker"}
 _KEY_FIELDS = ("millionverifier_api_key", "icypeas_api_key", "anymailfinder_api_key",
                "openai_api_key", "instantly_api_key")
 TOOLS = [
@@ -384,6 +388,13 @@ def _worker(run_id: str, firms: list[dict], cfg: dict, *, campaign=None, fm=None
         return r
 
     def make_icebreaker(firm, email):
+        if campaign is not None:
+            # a lane sends Icebreaker Studio's line from the sheet, never one of ours
+            line = runner_mod.sheet_icebreaker(firm, fm)
+            if not line:
+                emit(firm.get("Company Name", ""), "icebreaker", "skip",
+                     "no Icebreaker Studio line on the sheet yet")
+            return {"text": line, "style": "studio" if line else ""}
         ib = icebreaker_mod.build(firm, email, cfg.get("icebreaker_templates") or None)
         if cfg.get("use_openai_echo") and not test_mode and cfg.get("openai_api_key"):
             echoed = _openai_echo(ib["text"], cfg.get("openai_api_key", ""))
@@ -430,7 +441,7 @@ def _worker(run_id: str, firms: list[dict], cfg: dict, *, campaign=None, fm=None
         # found leads keep a blank sheet status until the push writes pushed_to_instantly_*
         if write_row and row["status"] in ("no_website", "email_not_found", "hold_security_gateway"):
             try:
-                up = sheets_mod.build_writeback_row(row, row["status"])
+                up = sheets_mod.build_writeback_row(row, row["status"], write_icebreaker=campaign is None)
                 w = write_row(sheets_mod.to_sheet_row(up, fm) if use_map else up)
                 if w.get("ok"):
                     job["counters"]["written_back"] += 1
@@ -945,7 +956,8 @@ def _push_worker(push_id: str, rows: list[dict], cfg: dict, *, camp=None, fm=Non
                 led.record({**row, "status": res["status"]}, pushed=True, fm=fm,
                            campaign=camp_id, test_mode=test_mode)
             if writeback:
-                up = sheets_mod.build_writeback_row(row, res["status"])
+                # the Ice Breaker column is Icebreaker Studio's: a lane never writes it
+                up = sheets_mod.build_writeback_row(row, res["status"], write_icebreaker=camp is None)
                 up = sheets_mod.to_sheet_row(up, fm) if use_map else up
                 if write_row:
                     try:
@@ -993,6 +1005,25 @@ def _push_worker(push_id: str, rows: list[dict], cfg: dict, *, camp=None, fm=Non
     _prune_runs()
 
 
+def _lane_icebreakers(cfg: dict, camp, fm, rows: list[dict]) -> tuple[list[dict], list[dict], str]:
+    """A lane's send-ready rows carrying Icebreaker Studio's CURRENT line
+    -> (ready, waiting for a line, note).
+
+    The live tab is read again (free, no API spend): Studio may have written lines since
+    the run. If the sheet cannot be read, the lines the run saw are used and the note says
+    so. The push and its preview both call this, so what is previewed is what is sent."""
+    note = ""
+    try:
+        rows = runner_mod.refresh_icebreakers(rows, _read_tab(cfg, camp.tab), fm)
+    except Exception as e:  # noqa: BLE001 - an unreadable sheet falls back to the run's lines
+        rows = runner_mod.refresh_icebreakers(rows, [], fm)
+        note = f"Could not re-read the sheet ({e}), so these are the lines the run saw."
+    if not cfg.get("hold_without_icebreaker", True):
+        return rows, [], note
+    ready, waiting = runner_mod.split_by_icebreaker(rows)
+    return ready, waiting, note
+
+
 def start_push(run_id: str = "", *, test_mode: bool = True, confirm: bool = False) -> dict:
     """Push the verified leads of a finished run to Instantly. Requires an explicit
     confirm; a real (non-test) push also needs a key + campaign id."""
@@ -1025,6 +1056,13 @@ def start_push(run_id: str = "", *, test_mode: bool = True, confirm: bool = Fals
     if not rows:
         return {"error": f"None of the {len(found)} addresses passed verification, so none "
                          "are send-ready. Nothing was pushed."}
+    if camp is not None:
+        rows, waiting, _note = _lane_icebreakers(cfg, camp, fm, rows)
+        if not rows:
+            return {"error": f"None of the {len(waiting)} send-ready leads has an Icebreaker "
+                             "Studio line on the sheet yet, so none were pushed. Run Icebreaker "
+                             "Studio for them, or switch off 'Hold leads without an ice "
+                             "breaker' in Settings."}
 
     if not test_mode:
         if not str(cfg.get("instantly_api_key", "")).strip():
@@ -1476,11 +1514,17 @@ def api_push_preview(run_id: str = ""):
 
     found = [r for r in snap.get("results", []) if r.get("found_email")]
     rows = [r for r in found if _is_send_ready(r)]
+    send_ready = len(rows)
+    waiting, ib_note = [], ""
+    if camp is not None:
+        rows, waiting, ib_note = _lane_icebreakers(cfg, camp, fm, rows)
     campaign = (camp.instantly_campaign_id if camp else "") or \
         str(cfg.get("instantly_campaign_id", "")).strip()
     return {
         "run_id": snap.get("run_id"), "ready": len(rows),
-        "found": len(found), "held_not_send_ready": len(found) - len(rows),
+        "found": len(found), "held_not_send_ready": len(found) - send_ready,
+        "waiting_icebreaker": len(waiting), "icebreaker_note": ib_note,
+        "waiting_companies": [r.get("company", "") for r in waiting[:25]],
         "campaign": camp_id, "campaign_name": snap.get("campaign_name") or "",
         "has_key": bool(str(cfg.get("instantly_api_key", "")).strip()),
         "campaign_id": campaign, "delay": cfg.get("push_delay_seconds", 3),

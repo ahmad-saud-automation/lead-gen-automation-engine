@@ -322,6 +322,20 @@ export function RunMonitor({ runId }: { runId?: string }) {
               detail="They found an address but did not pass verification. Only a real pass may be sent."
             />
           ) : null}
+          {preview.waiting_icebreaker ? (
+            <ErrorBox
+              soft
+              title={`${preview.waiting_icebreaker} lead(s) waiting for an Icebreaker Studio line`}
+              detail={
+                <>
+                  Their sheet row has no ice breaker yet, so they are held back. Run Icebreaker Studio
+                  for them and push again — the line is re-read from the sheet each time.
+                  {preview.waiting_companies?.length ? <> Waiting: {preview.waiting_companies.join(", ")}.</> : null}
+                </>
+              }
+            />
+          ) : null}
+          {preview.icebreaker_note ? <ErrorBox soft title="Ice breakers" detail={preview.icebreaker_note} /> : null}
           {previewError ? <ErrorBox title="The push did not start" detail={previewError} /> : null}
 
           <div>

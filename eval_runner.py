@@ -172,6 +172,27 @@ def check_push_options_never_leak_the_campaign_id():
     assert o == {"blocklist_id": "bl-1", "skip_if_in_list": True}, o
 
 
+def check_a_lane_reads_icebreaker_studios_line_from_the_sheet():
+    firm = {"_raw": _row(1, **{"Ice Breaker": "  saw your new Leeds office  "}), "company": "Firm 1"}
+    assert runner.sheet_icebreaker(firm, ECO_MAP) == "saw your new Leeds office"
+    assert runner.sheet_icebreaker({"_raw": _row(2)}, ECO_MAP) == ""
+
+
+def check_a_push_uses_the_line_the_sheet_holds_now():
+    # the run saw no line; Studio wrote one afterwards; the push must send Studio's
+    results = [{"row_key": "P-1", "company": "Firm 1", "icebreaker": ""},
+               {"row_key": "P-2", "company": "Firm 2", "icebreaker": "old line"},
+               {"row_key": "P-9", "company": "Gone", "icebreaker": "kept"}]
+    sheet_now = [_row(1, **{"Ice Breaker": "written later by Studio"}), _row(2)]
+    out = runner.refresh_icebreakers(results, sheet_now, ECO_MAP)
+    assert out[0]["icebreaker"] == "written later by Studio" and out[0]["ice_style"] == "studio"
+    assert out[1]["icebreaker"] == "", "the sheet's current (empty) line wins over the run's"
+    assert out[2]["icebreaker"] == "kept", "a lead no longer on the sheet keeps the run's line"
+    ready, waiting = runner.split_by_icebreaker(out)
+    assert [r["company"] for r in ready] == ["Firm 1", "Gone"]
+    assert [r["company"] for r in waiting] == ["Firm 2"]
+
+
 def check_loading_the_shipped_config_gives_maps_and_lanes():
     loaded = runner.load_config_dir(Path(__file__).parent / "config")
     assert len(loaded["campaigns"]) == 4
@@ -189,6 +210,8 @@ CHECKS = [check_headers_are_read_from_the_rows, check_a_bad_map_blocks_the_run_b
           check_the_existing_email_is_used_before_any_guessing,
           check_label_source_row_merges_raw_and_result,
           check_push_options_never_leak_the_campaign_id,
+          check_a_lane_reads_icebreaker_studios_line_from_the_sheet,
+          check_a_push_uses_the_line_the_sheet_holds_now,
           check_loading_the_shipped_config_gives_maps_and_lanes]
 
 
