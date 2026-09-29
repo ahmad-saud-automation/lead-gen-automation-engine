@@ -140,6 +140,28 @@ export function StatTable<T>({
   );
 }
 
+/** One labelled control inside a `.form-grid`. The caption is the theme's small mono label;
+ *  the hint underneath says what the setting does, in the words of the person who set it. */
+export function Field({
+  label,
+  hint,
+  wide,
+  children,
+}: {
+  label: string;
+  hint?: ReactNode;
+  wide?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <label className={wide ? "span-all" : undefined}>
+      <span>{label}</span>
+      {children}
+      {hint ? <small className="hint">{hint}</small> : null}
+    </label>
+  );
+}
+
 export type CheckTone = "ok" | "warn" | "fail";
 export type CheckItem = { tone: CheckTone; text: ReactNode };
 
@@ -196,6 +218,23 @@ export function Loading({ rows = 4 }: { rows?: number }) {
         <div key={i} className="skeleton" style={{ height: i === 0 ? 34 : 18 }} />
       ))}
     </div>
+  );
+}
+
+/** A tab read from a local file (`local_tabs` in Settings) rather than the live sheet. Every
+ *  count on the screen is that snapshot's, so it is said up front, never discovered later. */
+export function SnapshotNote({ tab, path }: { tab: string; path?: string }) {
+  return (
+    <ErrorBox
+      soft
+      title={`Tab ${tab} is being read from a local file, not the live sheet`}
+      detail={
+        <>
+          <code>{path}</code>. What this screen shows is that snapshot. Clear <code>local_tabs</code>{" "}
+          in Settings to go back to the sheet.
+        </>
+      }
+    />
   );
 }
 

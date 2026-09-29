@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { SavedNoteBar } from "@/components/saved-note";
 import { Sidebar } from "@/components/shell";
 import "./globals.css";
 import "./leadgen.css";
@@ -27,7 +28,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <Sidebar />
-        <main className="main">{children}</main>
+        <main className="main">
+          <SavedNoteBar />
+          {children}
+        </main>
       </body>
     </html>
   );

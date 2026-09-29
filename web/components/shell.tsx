@@ -166,10 +166,26 @@ export function Sidebar() {
 /** The bar at the top of every page: what this screen is, and anything it needs on the right.
  *  The link to the V1 interface stays on every page, as it did in V2's header: it is the
  *  fallback if anything here misbehaves. */
-export function TopBar({ title, sub, right }: { title: string; sub?: string; right?: React.ReactNode }) {
+export function TopBar({
+  title,
+  sub,
+  right,
+  back,
+}: {
+  title: string;
+  sub?: string;
+  right?: React.ReactNode;
+  /** A page opened from a list gets a way back to it. */
+  back?: { href: string; label: string };
+}) {
   return (
     <div className="topbar">
       <div className="topbar-title">
+        {back ? (
+          <Link className="back-btn" href={back.href}>
+            ← {back.label}
+          </Link>
+        ) : null}
         <h1>{title}</h1>
         {sub ? <span className="sub">{sub}</span> : null}
       </div>

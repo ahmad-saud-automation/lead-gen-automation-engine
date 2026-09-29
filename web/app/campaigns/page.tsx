@@ -1,7 +1,15 @@
-import { NotMoved } from "@/components/not-moved";
+import { CampaignList } from "@/components/campaign-list";
+import { TopBar } from "@/components/shell";
 
 export const metadata = { title: "Campaigns · Lead Gen Engine" };
 
 export default function CampaignsPage() {
-  return <NotMoved title="Campaigns" hash="campaigns" />;
+  return (
+    <>
+      <TopBar title="Campaigns" sub="config/campaigns.json" />
+      <div className="page">
+        <CampaignList />
+      </div>
+    </>
+  );
 }

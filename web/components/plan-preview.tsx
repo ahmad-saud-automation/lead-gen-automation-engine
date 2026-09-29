@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 
-import { Card, Checks, Chip, ErrorBox, Loading, Seg, StatTable, Tile, type CheckItem, type Col } from "@/components/ui";
+import {
+  Card, Checks, Chip, ErrorBox, Loading, Seg, SnapshotNote, StatTable, Tile, type CheckItem, type Col,
+} from "@/components/ui";
 import { getJson } from "@/lib/client-api";
 import { money, num } from "@/lib/format";
 import type { PlanLane, PlanReport } from "@/lib/types";
@@ -127,17 +129,7 @@ export function PlanPreview() {
       {error ? <ErrorBox title="The preview did not run" detail={error} /> : null}
 
       {snapshots.map(([tab, s]) => (
-        <ErrorBox
-          key={tab}
-          soft
-          title={`Tab ${tab} is being read from a local file, not the live sheet`}
-          detail={
-            <>
-              <code>{s.path}</code>. Counts reflect that snapshot. Clear <code>local_tabs</code> in
-              Settings to go back to the sheet.
-            </>
-          }
-        />
+        <SnapshotNote key={tab} tab={tab} path={s.path} />
       ))}
 
       {loading ? (

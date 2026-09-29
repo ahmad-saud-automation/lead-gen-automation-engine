@@ -28,8 +28,25 @@ API rule carried from V2: the engine answers **200 with `{error}`** for expected
 | Phase | Status |
 |---|---|
 | 1. Scaffold: layout, sidebar (Pipeline / Setup groups), TopBar, `ui.tsx`, icons, client API, **Plan preview ported** | ✅ done 2026-09-29. `next build` clean; Plan verified on real Eco data (4 lanes, 128 leads, $0.46); phone width checked |
-| 2. Port the rest: Field map → Settings → Campaigns + `CampaignDrawer` → Runs (polling, cancel, push, downloads). Add `lib/nav.ts` + `saved-note.tsx` from Icebreaker with the first save (reload-after-save; see Icebreaker's `lib/nav.ts` for why) | ⏳ next. Unported pages show a "Not moved yet" card linking to `/v2#/<page>` |
-| 3. Make `start-app.bat` start both, parity check against V2 screen by screen, then archive `ui/` + `build-ui.bat` | ⏳ |
+| 2. Port the rest: Field map, Settings, Campaigns (+ editor), Runs | ✅ done 2026-09-29. All read paths verified on real data. **Save / run / push paths NOT exercised** (they write the real config or spend) — they call the same endpoints V2 did |
+| 3. Exercise every save/run/push once, make `start-app.bat` start both, then archive `ui/` + `build-ui.bat` (and drop the `/v2` + `/assets` rewrites) | ⏳ next |
+
+Where each V2 screen went:
+
+| V2 | V3 | Changed on purpose |
+|---|---|---|
+| `#/campaigns` + `CampaignDrawer` | `/campaigns` + **`/campaigns/[id]`** (own page, not a drawer) | Save returns to the list with a note. Toggling a lane re-fetches in place (`flashNote`), so loaded counts survive |
+| `#/plan` | `/plan` | — |
+| `#/run/<id>` | `/runs?run=<id>` | **Stop now works**: V2 posted no `run_id`, so `/api/run/cancel` never found the run. A push opens its own job's page. Results + event-log CSV links added |
+| `#/fieldmap` | `/fieldmap` | — |
+| `#/settings` | `/settings` | Save checks the caps reply: `campaigns/globals` can refuse (`ok:false`) and V2 still said "saved". Numbers kept as typed text until save |
+
+Toasts are gone: a save reloads with a note (`reloadWithNote` / `goWithNote`), a change needing no
+reload uses `flashNote`. Both render in `components/saved-note.tsx`.
+
+Theme traps found (both fixed in `leadgen.css`, not `globals.css`):
+- `.form-grid label > span` styles EVERY direct span as a caption — wrap controls in `span.inline`.
+- `td.clip` is `width:100%`, built for ONE clipped column — use `td.cell-clip` for several.
 
 Not carried over: V2's dark-mode toggle. The shared theme is light only, deliberately (see the
 header of `globals.css`).
