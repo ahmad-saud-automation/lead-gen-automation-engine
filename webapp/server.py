@@ -15,6 +15,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import re
 import sys
 import threading
@@ -1158,25 +1159,21 @@ async def no_cache(request: Request, call_next):
     return resp
 
 
-# The V2 interface is a built React app in webapp/dist. The V1 interface is untouched and
-# stays reachable at /legacy — it is the fallback if anything about the new one misbehaves.
-DIST = WEBAPP_DIR / "dist"
+# The screens are a separate Next.js app (web/) on their own port, which passes /api through
+# to this engine. The V1 interface is untouched and stays reachable at /legacy — it is the
+# fallback if anything about the new one misbehaves.
+SCREENS_URL = os.environ.get("LEADGEN_SCREENS_URL", "http://127.0.0.1:3200/")
 
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    built = DIST / "index.html"
-    if built.exists():
-        return built.read_text(encoding="utf-8")
-    # not built yet: say so plainly rather than 404-ing, and offer the old interface
+    # a page, not a redirect: if the screens are not running, a redirect lands on a browser
+    # error that says nothing about why, or that /legacy still works
     return (
         "<body style=\"font:15px system-ui;max-width:38rem;margin:12vh auto;padding:0 1.5rem;"
-        "line-height:1.6\"><h1>Interface not built yet</h1>"
-        "<p>The V2 interface lives in <code>ui/</code> and builds into "
-        "<code>webapp/dist</code>. Build it once with:</p>"
-        "<pre style=\"background:#f4f5f7;padding:.8rem 1rem;border-radius:.5rem\">"
-        "cd ui\nnpm install\nnpm run build</pre>"
-        "<p><code>start-app.bat</code> does this for you automatically.</p>"
+        "line-height:1.6\"><h1>This is the engine</h1>"
+        f"<p>The screens are at <a href=\"{SCREENS_URL}\">{SCREENS_URL}</a>. "
+        "<code>start-app.bat</code> starts both.</p>"
         "<p><a href=\"/legacy\">Open the original interface instead &rarr;</a></p></body>"
     )
 
@@ -1185,17 +1182,6 @@ def index():
 def legacy_index():
     """The V1 interface, kept working so there is always a way back."""
     return (WEBAPP_DIR / "index.html").read_text(encoding="utf-8")
-
-
-@app.get("/assets/{name}")
-def dist_asset(name: str):
-    """Built JS/CSS. The name is resolved inside dist and must stay inside it."""
-    p = (DIST / "assets" / name).resolve()
-    if not str(p).startswith(str((DIST / "assets").resolve())) or not p.exists():
-        return JSONResponse({"error": "not found"}, status_code=404)
-    kind = {".js": "application/javascript", ".css": "text/css", ".map": "application/json",
-            ".svg": "image/svg+xml", ".woff2": "font/woff2"}.get(p.suffix, "application/octet-stream")
-    return FileResponse(p, media_type=kind)
 
 
 @app.get("/style.css")

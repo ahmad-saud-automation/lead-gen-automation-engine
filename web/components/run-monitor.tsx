@@ -228,7 +228,11 @@ export function RunMonitor({ runId }: { runId?: string }) {
 
       {isPush ? (
         <div className="band cols-4 stats">
-          <Tile label="Pushed" title="Added to Instantly" value={num(c.pushed)} />
+          <Tile
+            label="Pushed"
+            title={run.test_mode ? "Would be added (nothing sent)" : "Added to Instantly"}
+            value={num(c.pushed)}
+          />
           <Tile label="Skipped" title="Already in Instantly" value={num(c.push_skipped)} />
           <Tile label="Failed" title="Refused or errored" value={num(c.push_failed)} chips={c.push_failed ? <Chip tone="down">see the feed</Chip> : undefined} />
           <Tile label="Mode" title="What this push did" value={run.test_mode ? "Dry run" : "Live"} />

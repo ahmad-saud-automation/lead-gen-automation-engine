@@ -15,11 +15,8 @@ __pycache__/
 .venv/
 venv/
 
-# UI: dependencies live outside this folder (see build-ui.bat) and the bundle is built
-ui/node_modules/
-webapp/dist/
-
 # Next.js screens: node_modules and .next are junctions into C:\ClaudeDeps\leadgen-web
+# (see start-app.bat)
 web/node_modules
 web/.next
 web/tsconfig.tsbuildinfo

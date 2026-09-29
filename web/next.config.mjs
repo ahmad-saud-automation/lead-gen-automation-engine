@@ -15,8 +15,6 @@ const nextConfig = {
   /* The browser asks THIS address for everything; Python's own pages are passed through.
    *
    *   /api/*          the engine
-   *   /v2             the React + Vite interface, until every screen has moved here
-   *   /assets/*       that interface's bundle
    *   /legacy         the V1 interface, the fallback if anything here misbehaves
    *   /style.css,
    *   /app.js         V1's two files
@@ -26,8 +24,6 @@ const nextConfig = {
   async rewrites() {
     return [
       { source: "/api/:path*", destination: `${api}/api/:path*` },
-      { source: "/v2", destination: `${api}/` },
-      { source: "/assets/:path*", destination: `${api}/assets/:path*` },
       { source: "/legacy", destination: `${api}/legacy` },
       { source: "/style.css", destination: `${api}/style.css` },
       { source: "/app.js", destination: `${api}/app.js` },

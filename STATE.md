@@ -4,21 +4,24 @@ Handoff so a new session does not re-explore. **Last updated 2026-09-29.**
 
 ---
 
-## ▶ IN PROGRESS — V3: moving the screens to Next.js (branch `nextjs-ui`)
+## ✅ V3 — the screens are Next.js (branch `nextjs-ui`, not merged to `main` yet)
 
-Goal: same look, layout, fonts and UI as **YT Dashboard (A8OM View)** and **Icebreaker Studio**.
-**Only the screens move.** Python (`core/`, `webapp/server.py`, 33 `/api/*` routes, the tests)
-is untouched. The rollback point is commit `5420410` on `main` (V2 snapshot).
+Same look, layout, fonts and UI as **YT Dashboard (A8OM View)** and **Icebreaker Studio**.
+**Only the screens moved.** Python (`core/`, 33 `/api/*` routes, the tests) is unchanged, except
+`webapp/server.py`'s `/` page, which now points at the screens instead of serving the V2 build.
+Rollback point: commit `5420410` on `main` (V2 snapshot). V2's source is also in
+`_archive\lead gen automation engine - V2 ui 2026-09-29`.
 
 | | |
 |---|---|
 | Template | `..\icebreaker-studio\web` — Next 15.5.26, React 19.1.1, TypeScript, plain CSS, no Tailwind |
 | Theme | `web/app/globals.css` = Icebreaker's copy, **unchanged. Never edit it for a look** — add to `web/app/leadgen.css` |
 | Ports | screens **3200** (YT = 3000, Icebreaker = 3100), engine stays **8771** |
-| Wiring | `web/next.config.mjs` rewrites `/api/*`, `/v2` (the V2 React screens), `/assets/*`, `/legacy`, `/style.css`, `/app.js` to Python. Browser code uses relative paths only |
+| Wiring | `web/next.config.mjs` rewrites `/api/*`, `/legacy`, `/style.css`, `/app.js` to Python. Browser code uses relative paths only |
 | Deps | `web/node_modules` → `C:\ClaudeDeps\leadgen-web\node_modules`, `web/.next` → `C:\ClaudeDeps\leadgen-web\next-build` (junctions) |
-| Start | `start-web.bat` (engine if not running + build once + `next start`). `start-web.bat rebuild` after editing `web\`. `start-app.bat` still serves V2 on 8771 |
+| Start | `start-app.bat` — engine + screens in one window, builds once. `start-app.bat rebuild` after editing `web\` |
 | Icons | Tabler path data in `web/components/icons.tsx`; add from `unpkg.com/@tabler/icons@3.47.0/icons/outline/<name>.svg` |
+| Leftover | `C:\ClaudeDeps\leadgen-ui` (V2's ~82 MB of packages) is no longer used and can be deleted |
 
 API rule carried from V2: the engine answers **200 with `{error}`** for expected problems.
 `lib/client-api.ts` throws only when the engine cannot answer; each screen checks `.error`.
@@ -28,8 +31,21 @@ API rule carried from V2: the engine answers **200 with `{error}`** for expected
 | Phase | Status |
 |---|---|
 | 1. Scaffold: layout, sidebar (Pipeline / Setup groups), TopBar, `ui.tsx`, icons, client API, **Plan preview ported** | ✅ done 2026-09-29. `next build` clean; Plan verified on real Eco data (4 lanes, 128 leads, $0.46); phone width checked |
-| 2. Port the rest: Field map, Settings, Campaigns (+ editor), Runs | ✅ done 2026-09-29. All read paths verified on real data. **Save / run / push paths NOT exercised** (they write the real config or spend) — they call the same endpoints V2 did |
-| 3. Exercise every save/run/push once, make `start-app.bat` start both, then archive `ui/` + `build-ui.bat` (and drop the `/v2` + `/assets` rewrites) | ⏳ next |
+| 2. Port the rest: Field map, Settings, Campaigns (+ editor), Runs | ✅ done 2026-09-29. All read paths verified on real data |
+| 3. Exercise the writes, one launcher, retire V2 | ✅ done 2026-09-29, see below |
+
+Phase 3 write tests (2026-09-29), each checked against the file, then the file restored from git:
+
+| Path | Result |
+|---|---|
+| Field map save | Only the edited key changed (engine re-orders the file into FIELDS order — V2 did too) |
+| Campaign save | One semantic change (`priority`); rules, labels, order round-tripped intact |
+| Lane toggle on → off | `campaigns.json` byte-identical afterwards |
+| Settings save | `data/config.json` identical — 39 settings, masked keys NOT saved over real ones |
+| Test-mode run | 5/5, $0.00, sheet skipped, ledger unchanged (10 / 0 / 5) |
+| Stop | `/api/run/cancel` with `{}` (V2) → `ok:false`; with `{run_id}` (V3) → `ok:true` |
+| Dry-run push | Refused cleanly on a test run (0 send-ready); on run `df18c6944e49` pushed 2 "(test)", ledger unchanged |
+| **Not exercised** | **Live run, live push, Clear ledger** — spend money, leave the machine, or cannot be undone |
 
 Where each V2 screen went:
 
@@ -64,17 +80,17 @@ lacks the Google libraries, so `docpipeline-venv` starts the engine but cannot r
 | | |
 |---|---|
 | V1 backup | `_archive\lead gen automation engine - V1 BACKUP 2026-09-04` — 174 files, 6,003,146 bytes, byte-verified. **The engine is NOT a git repo, so this folder is the only fallback.** |
-| Tests | **162 checks across 19 files**, all passing, all offline (was 96 / 14) |
+| Tests | **166 checks across 19 files**, all passing, all offline (re-run 2026-09-29) |
 | Requirements + research | `docs/V2-REQUIREMENTS.md` |
-| Interface | React + Vite + Tailwind in `ui/`, built into `webapp/dist`. The V1 interface is untouched and still served at **`/legacy`** |
+| Interface | **V3: Next.js in `web/`** (see top). V2's React + Vite `ui/` is archived. The V1 interface is untouched and still served at **`/legacy`** |
 
 ## Running it
 
 ```
 start-app.bat
 ```
-Builds the interface on first launch if it is missing, then opens
-`http://127.0.0.1:8771`. `build-ui.bat` rebuilds it on its own after a UI edit.
+Starts the engine (8771) and the screens (3200) in one window, builds the screens on first
+launch, then opens `http://127.0.0.1:3200`. `start-app.bat rebuild` after editing `web\`.
 
 ---
 
@@ -205,11 +221,13 @@ Instantly tabs) and its agent view. Dark mode included.
 
 ### UI build rules
 
-- Source in `ui/`, bundle in `webapp/dist`. `build-ui.bat` does install → relocate → build.
+- V3: source in `web/`, build in `web/.next`. `start-app.bat` does install → relocate → build.
+  (V2's `ui/` + `build-ui.bat` are archived.)
 - ⚠️ **`node_modules` must be relocated after EVERY `npm install`** — the install deletes
-  the junction and rebuilds a real folder each time.
+  the junction and rebuilds a real folder each time. Use robocopy `/MOVE`, not `move`:
+  Google Drive locks files it is still syncing and `move` fails with "Access denied".
 - ⚠️ **The target folder must itself be named `node_modules`.** It lives at
-  `C:\ClaudeDeps\leadgen-ui\node_modules`, NOT `C:\ClaudeDeps\leadgen-node_modules`. Node
+  `C:\ClaudeDeps\leadgen-web\node_modules`, NOT `C:\ClaudeDeps\leadgen-node_modules`. Node
   follows the junction to the real path and then walks *up* looking for a folder called
   `node_modules`; a differently named target breaks every import with
   `ERR_MODULE_NOT_FOUND`. This cost a build cycle to find.
