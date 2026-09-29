@@ -6,6 +6,109 @@
    this file, or change the token in globals.css and say so.
    --------------------------------------------------------------------------- */
 
+/* ============================ DARK MODE ============================
+   V2's dark palette (ui/src/index.css, archived 2026-09-29), mapped onto the
+   theme's own tokens so every card, table and form follows without a rule of
+   its own. The accent becomes V2's blue, as it was. Set by the toggle in the
+   sidebar as data-theme on <html>; app/layout.tsx applies it before paint.
+   globals.css says "light only" — this is the user's decision of 2026-09-29
+   to bring V2's dark mode back, kept here so globals.css stays unchanged. */
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --paper: #0a0e15;
+  --surface: #121722;
+  --white: #161c29;
+
+  --ink: #e6e9ef;
+  --body: #c5ccd8;
+  --muted: #8d99ad;
+  --faint: #6b7688;
+
+  --coral: #3b82f6;
+  --coral-ink: #60a5fa;
+  --coral-wash: #16233c;
+
+  --pos: #4ade80;
+  --pos-wash: #12261a;
+  --neg: #f87171;
+  --neg-wash: #2a1415;
+  --warn: #fbbf24;
+  --warn-wash: #2a1f0d;
+
+  --cat-1: #c5ccd8;
+
+  --line: #232b3a;
+  --line-2: #1a2130;
+  --line-str: #303a4d;
+
+  --lift: 0 24px 60px -30px rgba(0, 0, 0, 0.8);
+}
+
+/* The rules in globals.css that name a light colour instead of a token. */
+[data-theme="dark"] .topbar { background: rgba(10, 14, 21, 0.88); }
+[data-theme="dark"] .chip { background: rgba(255, 255, 255, 0.07); }
+[data-theme="dark"] .rail-btn.hot,
+[data-theme="dark"] .phone-nav a:hover,
+[data-theme="dark"] .ctl:hover,
+[data-theme="dark"] .seg button:hover:not(:disabled),
+[data-theme="dark"] .seg a:hover { background: rgba(255, 255, 255, 0.06); }
+[data-theme="dark"] table.stat tbody tr:hover td { background: rgba(255, 255, 255, 0.03); }
+[data-theme="dark"] .scroll-x table.stat tbody tr:hover td:first-child {
+  background: linear-gradient(rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03)) var(--surface);
+}
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):hover,
+[data-theme="dark"] select:hover,
+[data-theme="dark"] textarea:hover { border-color: rgba(255, 255, 255, 0.3); }
+[data-theme="dark"] .modal-backdrop { background: rgba(0, 0, 0, 0.55); }
+[data-theme="dark"] .skeleton {
+  background: linear-gradient(90deg, rgba(255,255,255,.04), rgba(255,255,255,.08), rgba(255,255,255,.04));
+  background-size: 200% 100%;
+}
+[data-theme="dark"] .saved-note,
+[data-theme="dark"] .editor { box-shadow: 0 14px 34px -18px rgba(0, 0, 0, 0.8); }
+
+/* The primary action in V2's blue, as V2 had it, rather than an inverted ink pill. */
+[data-theme="dark"] .ctl.solid,
+[data-theme="dark"] .seg button.on,
+[data-theme="dark"] .seg a.on {
+  background: var(--coral);
+  border-color: var(--coral);
+  color: #fff;
+}
+[data-theme="dark"] .ctl.solid:hover { background: #2563eb; }
+[data-theme="dark"] .switch:checked { background: var(--coral); }
+[data-theme="dark"] .switch::before { background: #e6e9ef; }
+
+/* White text on light red is unreadable: a destructive action is tinted instead. */
+[data-theme="dark"] .ctl.danger {
+  background: var(--neg-wash);
+  border-color: var(--neg);
+  color: var(--neg);
+}
+[data-theme="dark"] .ctl.danger:hover { background: #3a1719; }
+
+/* The theme toggle in the phone menu, shaped like the menu's links. */
+.phone-theme {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--body);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.phone-theme:hover {
+  background: var(--line-2);
+}
+
 /* Blocks on a page sit one gap apart, like the cards in a band. */
 .stack > * + * {
   margin-top: var(--gap);
@@ -272,6 +375,19 @@ table.stat td.cell-clip {
   color: var(--faint);
 }
 
+.local-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--line-2);
+}
+
+.rowlist-head + .local-line {
+  border-top: 0;
+}
+
 .rule-line,
 .sort-line,
 .label-line {
@@ -346,6 +462,105 @@ table.stat td.cell-clip {
     grid-column: 2;
     grid-row: 1;
   }
+}
+
+/* ---------- dashboard ---------- */
+
+/* The last run as a funnel: organised → found → verified → ice breaker → pushed. The last
+   step is the outcome, so it alone is green. */
+.funnel {
+  display: grid;
+  gap: 8px;
+}
+
+.funnel-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.funnel-label {
+  color: var(--body);
+}
+
+.funnel-track {
+  height: 10px;
+  border-radius: var(--pill);
+  background: var(--line-2);
+  overflow: hidden;
+}
+
+.funnel-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--pill);
+  background: var(--ink);
+  opacity: 0.7;
+}
+
+.funnel-row.final .funnel-fill {
+  background: var(--pos);
+  opacity: 1;
+}
+
+.funnel-row .num {
+  text-align: right;
+  color: var(--ink);
+  font-weight: 550;
+}
+
+/* ---------- results + log ---------- */
+
+table.stat tr.rowlink {
+  cursor: pointer;
+}
+
+table.stat tr.rowlink.open td {
+  background: var(--paper);
+}
+
+table.stat tr.result-detail td {
+  background: var(--paper);
+  white-space: normal;
+  padding-top: 4px;
+  padding-bottom: 14px;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.kv dt {
+  color: var(--muted);
+}
+
+.kv dd {
+  margin: 0;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.tries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+table.stat td.cell-clip.wide {
+  max-width: 32rem;
+}
+
+.log-search {
+  flex: 1;
+  min-width: 200px;
 }
 
 /* ---------- runs ---------- */

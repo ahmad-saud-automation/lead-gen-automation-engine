@@ -2,12 +2,15 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
+import { Confirm } from "@/components/modal";
+import { NewCampaign } from "@/components/new-campaign";
 import { TopBar } from "@/components/shell";
 import { Card, Chip, ErrorBox, Field, Loading, Seg } from "@/components/ui";
 import { getJson, postJson } from "@/lib/client-api";
 import { goWithNote } from "@/lib/nav";
 import type {
-  CampaignDetail, CampaignRaw, CampaignsSaved, Clause, ConfigIssue, LabelSpec, RuleBlock, SortKey,
+  CampaignDetail, CampaignRaw, CampaignsSaved, CampaignsView, CampaignSummary, Clause, ConfigIssue,
+  LabelSpec, RuleBlock, SortKey,
 } from "@/lib/types";
 
 type Tab = "setup" | "rules" | "order" | "labels" | "instantly";
@@ -121,6 +124,9 @@ export function CampaignEditor({ id }: { id: string }) {
   const [tab, setTab] = useState<Tab>("setup");
   const [saving, setSaving] = useState(false);
   const [issues, setIssues] = useState<ConfigIssue[]>([]);
+  const [lanes, setLanes] = useState<CampaignSummary[]>([]);
+  const [duplicating, setDuplicating] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     getJson<CampaignDetail>("/campaigns/detail", { id })
@@ -130,6 +136,8 @@ export function CampaignEditor({ id }: { id: string }) {
         setC(structuredClone(d.campaign));
       })
       .catch((e: Error) => setError(e.message));
+    // the other lanes: Duplicate offers their tabs and field maps
+    getJson<CampaignsView>("/campaigns").then((v) => setLanes(v.campaigns ?? [])).catch(() => {});
   }, [id]);
 
   const back = { href: "/campaigns", label: "Campaigns" };
@@ -191,6 +199,25 @@ export function CampaignEditor({ id }: { id: string }) {
     }
   };
 
+  const remove = async () => {
+    setConfirmDelete(false);
+    setSaving(true);
+    try {
+      const r = await postJson<CampaignsSaved>("/campaigns/delete", { id: c.id });
+      if (!r.ok) {
+        setIssues(r.issues ?? [{ campaign: c.id, issue: "The engine did not remove it." }]);
+        setSaving(false);
+        return;
+      }
+      goWithNote("/campaigns", `${c.name || c.id} removed. Its past runs and ledger rows are kept.`);
+    } catch (e) {
+      setIssues([{ campaign: c.id, issue: e instanceof Error ? e.message : String(e) }]);
+      setSaving(false);
+    }
+  };
+
+  const self = lanes.find((l) => l.id === c.id);
+
   return (
     <>
       <TopBar
@@ -198,9 +225,20 @@ export function CampaignEditor({ id }: { id: string }) {
         sub={`${c.id} · reads "${c.tab}"`}
         back={back}
         right={
-          <button type="button" className="ctl solid" onClick={save} disabled={saving}>
-            {saving ? "Saving…" : "Save campaign"}
-          </button>
+          <>
+            <button
+              type="button"
+              className="ctl"
+              onClick={() => setDuplicating(true)}
+              disabled={!self}
+              title="Saved settings are copied — save first if you changed anything"
+            >
+              Duplicate
+            </button>
+            <button type="button" className="ctl solid" onClick={save} disabled={saving}>
+              {saving ? "Saving…" : "Save campaign"}
+            </button>
+          </>
         }
       />
       <div className="page stack">
@@ -301,6 +339,18 @@ export function CampaignEditor({ id }: { id: string }) {
                     onChange={(e) => setIn("writeback", { campaign_type: e.target.value })}
                   />
                 </Field>
+              </div>
+            </Card>
+            <Card title="Remove this campaign">
+              <p className="muted">
+                Removes the lane from <code>config/campaigns.json</code> (the previous file is kept
+                as <code>campaigns.backup.json</code>). Its past runs, events and ledger rows keep
+                their id. To pause a lane instead, switch it off above.
+              </p>
+              <div className="toolbar">
+                <button type="button" className="ctl danger" onClick={() => setConfirmDelete(true)} disabled={saving}>
+                  Remove campaign
+                </button>
               </div>
             </Card>
           </>
@@ -527,6 +577,29 @@ export function CampaignEditor({ id }: { id: string }) {
           </Card>
         ) : null}
       </div>
+
+      {duplicating && self ? <NewCampaign lanes={lanes} copyFrom={self} onClose={() => setDuplicating(false)} /> : null}
+
+      {confirmDelete ? (
+        <Confirm
+          title={`Remove "${c.name || c.id}"?`}
+          danger
+          confirmLabel="Remove it"
+          body={
+            <>
+              <p>
+                The lane stops existing: it will not appear in Campaigns, Plan or Runs, and its rules,
+                labels and Instantly settings go with it.
+              </p>
+              <p className="muted">
+                Nothing already sent is affected, and the ledger still remembers every lead it handled.
+              </p>
+            </>
+          }
+          onConfirm={remove}
+          onClose={() => setConfirmDelete(false)}
+        />
+      ) : null}
     </>
   );
 }

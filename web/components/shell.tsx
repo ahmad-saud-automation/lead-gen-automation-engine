@@ -9,16 +9,26 @@ import { Icon, type IconName } from "@/components/icons";
 type NavItem = { href: string; label: string; icon: IconName };
 type NavGroup = { title: string; icon: IconName; items: NavItem[] };
 
-/* The screens, in the order the work happens: set up the lanes, preview what they would take,
- * run them. Setup is its own group because it is done once per sheet and then left alone. */
+/* The screens, in the order the work happens: see where things stand, set up the lanes,
+ * preview what they would take, run them, then look back. Setup is its own group because it is
+ * done once per sheet and then left alone. */
 export const NAV: NavGroup[] = [
   {
     title: "Pipeline",
-    icon: "list-details",
+    icon: "layout-dashboard",
     items: [
+      { href: "/", label: "Dashboard", icon: "layout-dashboard" },
       { href: "/campaigns", label: "Campaigns", icon: "list-details" },
       { href: "/plan", label: "Plan preview", icon: "clipboard-check" },
       { href: "/runs", label: "Runs", icon: "activity" },
+    ],
+  },
+  {
+    title: "Records",
+    icon: "history",
+    items: [
+      { href: "/history", label: "History", icon: "history" },
+      { href: "/log", label: "Log", icon: "file-text" },
     ],
   },
   {
@@ -31,7 +41,11 @@ export const NAV: NavGroup[] = [
   },
 ];
 
+/** Where the light/dark choice is kept. app/layout.tsx reads it before the first paint. */
+export const THEME_KEY = "leadgen:theme";
+
 function isActive(pathname: string, href: string): boolean {
+  if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
@@ -42,6 +56,25 @@ export function Sidebar() {
   const shutTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const side = useRef<HTMLElement>(null);
   const tapOpens = useRef(false);
+  const [dark, setDark] = useState(false);
+
+  // The page was already painted in the right theme by layout.tsx's script; this only makes
+  // the button show the matching icon.
+  useEffect(() => {
+    setDark(document.documentElement.dataset.theme === "dark");
+  }, []);
+
+  const toggleTheme = () => {
+    const next = dark ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    setDark(!dark);
+    try {
+      window.localStorage.setItem(THEME_KEY, next);
+    } catch {
+      // storage switched off: the choice lasts until the page is closed
+    }
+  };
+  const themeLabel = dark ? "Switch to light mode" : "Switch to dark mode";
 
   const show = (i: number) => {
     clearTimeout(shutTimer.current);
@@ -103,7 +136,7 @@ export function Sidebar() {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPanel(null);
       }}
     >
-      <Link className="brand" href="/campaigns" aria-label="Lead Gen Engine, Campaigns">
+      <Link className="brand" href="/" aria-label="Lead Gen Engine, Dashboard">
         <i aria-hidden="true">LG</i>
         <span>Lead Gen Engine</span>
       </Link>
@@ -151,6 +184,12 @@ export function Sidebar() {
         ))}
       </nav>
 
+      <div className="side-foot">
+        <button type="button" className="rail-btn" onClick={toggleTheme} aria-label={themeLabel} title={themeLabel}>
+          <Icon name={dark ? "sun" : "moon"} size={24} />
+        </button>
+      </div>
+
       <nav id="side-nav" className="phone-nav">
         {NAV.map((group) => (
           <div key={group.title} className="phone-grp">
@@ -158,6 +197,12 @@ export function Sidebar() {
             {group.items.map(link)}
           </div>
         ))}
+        <div className="phone-grp">
+          <button type="button" className="phone-theme" onClick={toggleTheme}>
+            <Icon name={dark ? "sun" : "moon"} size={22} />
+            <span>{dark ? "Light mode" : "Dark mode"}</span>
+          </button>
+        </div>
       </nav>
     </aside>
   );

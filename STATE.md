@@ -4,7 +4,32 @@ Handoff so a new session does not re-explore. **Last updated 2026-09-29.**
 
 ---
 
-## ✅ V3 — the screens are Next.js (branch `nextjs-ui`, not merged to `main` yet)
+## ▶ IN PROGRESS — V4: everything V1 had, on the V3 screens (planned 2026-09-29)
+
+Review found V3 = V2 parity, but **V2 only ever had 5 of V1's 10 tabs**, and no version could
+create a campaign. The user chose: build all of it, per-campaign schedules, CSV import "for
+maximum functionality and ease" (design left to us), dark mode last using V2's colours.
+
+| Phase | What | Engine work? | Status |
+|---|---|---|---|
+| A | Campaign create / duplicate / delete; last run per lane on the list | `core/campaigns.py` `new_campaign`/`remove_campaign` (+ `eval_campaign_admin.py`, 6 checks), `/api/campaigns/create` + `/delete`; history now records `campaign`, `kind`, `pushed`, and pushes are recorded too | ✅ tested on the real file, restored from git |
+| B | Dashboard home `/` + History `/history` | no | ✅ |
+| C | Results (on each run's page, expandable rows) + Log `/log` (filter, search, run picker, CSV) | no | ✅ |
+| D | Settings: all 14 missing keys + suppression lists + local-files editor + "V1 screens only" card | no | ✅ round trip identical (39 settings) |
+| E | **Ice breaker source.** Found 2026-09-29: the engine IGNORES the sheet's `Ice Breaker` column that Icebreaker Studio fills, builds its own template line, and write-back then OVERWRITES Studio's line in the sheet (`core/sheets.py build_writeback_row`, `core/pipeline.py` step 6). Proposed: use the sheet's line when present, templates only as fallback, never overwrite. **Waiting for the user's OK** — it changes what is sent. No template editor in V4 (Studio owns ice breakers) | yes | ⏳ asked |
+| F | Import: upload a CSV (or load a tab) → preview + organise stats → it becomes a source a lane can read (build on `local_tabs`); write-back off for file sources. Needs a short design pass | yes | ⏳ |
+| G | Per-campaign schedules (V2's planned Phase 3; `Campaign.schedule` exists but nothing reads it; `scheduled_run.py` only runs the OLD single-campaign flow). Needs a design pass | yes | ⏳ |
+| H | Dark mode: V2's dark palette mapped onto the theme tokens in `leadgen.css` (`:root[data-theme="dark"]`), toggle at the foot of the sidebar + in the phone menu, saved as `leadgen:theme`, applied before paint by `app/layout.tsx` | no | ✅ |
+
+Work is on branch **`v4`** (not committed yet at time of writing).
+Verifying in the hidden browser pane: CSS transitions never finish there (no frames), so a
+computed colour right after a change can be stale — read it with `transition: none`.
+
+V1's CSV → single-campaign run stays in `/legacy`; F replaces it for lanes.
+
+---
+
+## ✅ V3 — the screens are Next.js (merged to `main` as `359e9e0`)
 
 Same look, layout, fonts and UI as **YT Dashboard (A8OM View)** and **Icebreaker Studio**.
 **Only the screens moved.** Python (`core/`, 33 `/api/*` routes, the tests) is unchanged, except

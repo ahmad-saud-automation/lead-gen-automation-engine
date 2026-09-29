@@ -13,10 +13,17 @@ export const metadata: Metadata = {
 // Every screen shows live state, so nothing here is cached.
 export const dynamic = "force-dynamic";
 
+/* Runs before the first paint, so a dark-mode user never sees a flash of the light page.
+ * The saved choice wins; with none, the computer's own setting decides. Key: THEME_KEY in
+ * components/shell.tsx. */
+const THEME_SCRIPT = `try{var t=localStorage.getItem("leadgen:theme");if(t!=="dark"&&t!=="light")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}catch(e){}`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    // the theme attribute is set by THEME_SCRIPT before React loads, so it differs on purpose
+    <html lang="en" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
         {/* Loaded by link rather than next/font so a build never depends on reaching Google.
             The stack falls back to the system sans if it fails. */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />

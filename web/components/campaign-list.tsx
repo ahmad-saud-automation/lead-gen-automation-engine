@@ -4,11 +4,14 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Confirm } from "@/components/modal";
+import { NewCampaign } from "@/components/new-campaign";
 import { Card, Chip, ErrorBox, Loading, Tile } from "@/components/ui";
 import { getJson, postJson } from "@/lib/client-api";
 import { money, num } from "@/lib/format";
 import { flashNote, goWithNote } from "@/lib/nav";
-import type { CampaignSummary, CampaignsSaved, CampaignsView, PlanLane, PlanReport, RunStarted } from "@/lib/types";
+import type {
+  CampaignSummary, CampaignsSaved, CampaignsView, HistoryRow, PlanLane, PlanReport, RunStarted,
+} from "@/lib/types";
 
 /** MillionVerifier's rate, and the ~2 checks a lead takes: only to put a rough figure on the
  *  live-run button. The engine's own cost counters are what count. */
@@ -22,6 +25,8 @@ export function CampaignList() {
   const [loadingCounts, setLoadingCounts] = useState(false);
   const [busy, setBusy] = useState("");
   const [confirmRun, setConfirmRun] = useState<CampaignSummary | null>(null);
+  const [adding, setAdding] = useState<{ copyFrom?: CampaignSummary } | null>(null);
+  const [lastRun, setLastRun] = useState<Record<string, HistoryRow>>({});
 
   const load = () =>
     getJson<CampaignsView>("/campaigns")
@@ -30,6 +35,14 @@ export function CampaignList() {
 
   useEffect(() => {
     load();
+    // Newest first, so the first row seen for a lane is its last run. Pushes are not runs.
+    getJson<{ runs: HistoryRow[] }>("/history")
+      .then((h) => {
+        const by: Record<string, HistoryRow> = {};
+        for (const r of h.runs ?? []) if (r.campaign && r.kind !== "push" && !by[r.campaign]) by[r.campaign] = r;
+        setLastRun(by);
+      })
+      .catch(() => {});
   }, []);
 
   // Counts mean reading the whole sheet, so they are asked for, never automatic — the campaign
@@ -134,13 +147,16 @@ export function CampaignList() {
           is never in two campaigns.
         </p>
         <div className="toolbar">
+          <button type="button" className="ctl solid" onClick={() => setAdding({})}>
+            + New campaign
+          </button>
           <button type="button" className="ctl" onClick={loadCounts} disabled={loadingCounts}>
             {loadingCounts ? "Reading the sheet…" : counts ? "Reload counts" : "Load counts"}
           </button>
         </div>
 
         {list.length === 0 ? (
-          <div className="empty">No campaigns yet. Add one to config/campaigns.json and it appears here.</div>
+          <div className="empty">No campaigns yet. Use New campaign to add the first lane.</div>
         ) : (
           <div className="scroll-x">
             <table className="stat">
@@ -154,6 +170,7 @@ export function CampaignList() {
                   <th>Per run</th>
                   <th>Per day</th>
                   <th className="l">Target</th>
+                  <th className="l">Last run</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -212,11 +229,27 @@ export function CampaignList() {
                           <Chip tone="warn">no Instantly id</Chip>
                         )}
                       </td>
+                      <td className="l">
+                        {lastRun[c.id] ? (
+                          <a className="btn-link" href={`/runs?run=${lastRun[c.id].run_id}`}>
+                            {lastRun[c.id].when.slice(0, 16)}
+                            <small className="lane-id">
+                              {num(lastRun[c.id].found)} of {num(lastRun[c.id].leads)} found
+                              {lastRun[c.id].test_mode ? " · test" : ""}
+                            </small>
+                          </a>
+                        ) : (
+                          <span className="faint">never</span>
+                        )}
+                      </td>
                       <td>
                         <span className="row-btns">
                           <Link className="ctl sm" href={`/campaigns/${encodeURIComponent(c.id)}`}>
                             Configure
                           </Link>
+                          <button type="button" className="ctl sm" onClick={() => setAdding({ copyFrom: c })}>
+                            Duplicate
+                          </button>
                           <button
                             type="button"
                             className="ctl sm solid"
@@ -242,6 +275,8 @@ export function CampaignList() {
         title="Enable one pair of lanes at a time"
         detail="Lanes are claimed in priority order, so turning all four on means the size lanes take the rows first and the seniority test reads a fraction of its real population."
       />
+
+      {adding ? <NewCampaign lanes={list} copyFrom={adding.copyFrom} onClose={() => setAdding(null)} /> : null}
 
       {confirmRun ? (
         <Confirm

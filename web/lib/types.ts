@@ -88,6 +88,42 @@ export type CampaignsView = {
   campaigns: CampaignSummary[];
 };
 
+/** GET /api/history — one row per finished run or push, newest first. `campaign` and `kind`
+ *  are recorded from 2026-09-29 on; older rows do not have them. */
+export type HistoryRow = {
+  run_id: string;
+  when: string;
+  status: string;
+  kind?: "run" | "push";
+  campaign?: string;
+  campaign_name?: string;
+  test_mode: boolean;
+  leads: number;
+  found: number;
+  held: number;
+  not_found: number;
+  no_website?: number;
+  pushed?: number;
+  push_failed?: number;
+  source_run?: string | null;
+  credits?: number;
+  spent_usd: number;
+};
+
+/** GET /api/dashboard — the latest run (or ?run_id=), summarised the way V1's home did. */
+export type DashboardView = {
+  status: string;
+  run_id?: string;
+  when?: string;
+  total?: number;
+  found?: number;
+  pushed?: number;
+  held?: number;
+  credits?: { rows: { tool: string; credits: number; usd: number; rule: string }[]; total_credits: number; total_usd: number };
+  funnel?: { label: string; value: number; final?: boolean }[];
+  status_breakdown?: [string, number][];
+};
+
 /** Every write to config/campaigns.json. A file that would fail validation is never written. */
 export type CampaignsSaved = { ok: boolean; issues?: ConfigIssue[]; campaign?: string; campaigns?: number };
 
@@ -176,6 +212,32 @@ export type RunSnapshot = {
   credits?: { total_usd?: number; total_credits?: number };
   selection?: { matched: number; blocked_by_ledger: number; available: number; day_remaining: number; selected: number } | null;
   events?: RunEvent[];
+  results?: RunResult[];
+};
+
+/** One lead's outcome in a run (core/pipeline.py _row). */
+export type RunResult = {
+  company?: string;
+  domain?: string;
+  selected_director?: string;
+  found_email?: string;
+  email_source?: string;
+  verification?: string;
+  status?: string;
+  icebreaker?: string;
+  ice_style?: string;
+  gateway_provider?: string;
+  pushed?: boolean;
+  tries?: { email: string; accepted?: boolean; verification?: string; pattern?: string }[];
+  [director: string]: unknown;
+};
+
+/** GET /api/log — events across runs, newest first, filtered and searched by the engine. */
+export type LogView = {
+  events: (RunEvent & { run_id?: string; when?: string; email?: string })[];
+  total: number;
+  scanned: number;
+  counts: { success: number; failed: number; held: number; skipped: number };
 };
 
 /** GET /api/push/preview — exactly what a push would send, before anything goes. */
@@ -195,6 +257,7 @@ export type LedgerView = {
   total: number;
   pushed: number;
   pending_push: number;
+  by_status?: Record<string, number>;
   recent?: { company?: string; status: string; email?: string; pushed?: boolean; when?: string }[];
 };
 

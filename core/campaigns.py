@@ -19,6 +19,7 @@ Run it before every real run.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from . import rules as rules_mod
@@ -144,6 +145,72 @@ def validate(campaigns: list[Campaign], *, require_push_target: bool = False) ->
             bad("no instantly.campaign_id — a live push needs one")
 
     return issues
+
+
+# ───────────────────────── adding + removing lanes ─────────────────────────
+
+ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+
+
+def slug(text: str) -> str:
+    """'Owners — London 2' -> 'owners-london-2'. The id is what the ledger, the runs and the
+    sheet's Campaign Type column record, so it is plain and stable."""
+    s = re.sub(r"[^a-z0-9]+", "-", str(text or "").lower()).strip("-")
+    return s[:63]
+
+
+def new_campaign(existing: list[dict], *, name: str, tab: str = "", fieldmap: str = "",
+                 cid: str = "", copy_from: dict | None = None) -> tuple[dict | None, list[str]]:
+    """A new lane for campaigns.json -> (row, problems). Pure: the caller writes it.
+
+    A new lane is ALWAYS created switched off and checked LAST (highest priority number), so
+    adding one can never quietly take rows from a lane that is already running.
+
+    `copy_from` duplicates a lane's rules, order, labels, limits and write-back, but never:
+      · its Instantly campaign — two lanes on one Instantly campaign cannot be told apart
+        in the results, and validate() refuses it anyway;
+      · its enabled state or auto_push — a copy is a draft until someone turns it on.
+    """
+    name = str(name or "").strip()
+    cid = str(cid or "").strip().lower() or slug(name)
+    taken = {str(c.get("id") or "") for c in existing}
+    problems = []
+    if not name:
+        problems.append("give the campaign a name")
+    if not cid or not ID_RE.match(cid):
+        problems.append("the id must be lower-case letters, numbers, '-' or '_' (e.g. owners-london)")
+    elif cid in taken:
+        problems.append(f"there is already a campaign with the id '{cid}'")
+    if problems:
+        return None, problems
+
+    last = max((int(c.get("priority", DEFAULTS["priority"]) or 0) for c in existing), default=0)
+    if copy_from:
+        row = json.loads(json.dumps(copy_from))           # deep copy, JSON-shaped
+        if isinstance(row.get("instantly"), dict):
+            row["instantly"] = {k: v for k, v in row["instantly"].items() if k != "campaign_id"}
+        row.pop("note", None)
+    else:
+        row = {"limits": dict(DEFAULTS["limits"]), "rules": {}, "order": [], "labels": []}
+
+    row.update({"id": cid, "name": name, "enabled": False, "auto_push": False,
+                "priority": last + 10})
+    row["tab"] = str(tab or row.get("tab") or "").strip()
+    row["fieldmap"] = str(fieldmap or row.get("fieldmap") or "").strip()
+    # the sheet's Campaign Type column says which lane sent a row, so a copy gets its own
+    row["writeback"] = {**(row.get("writeback") or {}), "campaign_type": cid}
+    if not row["tab"]:
+        return None, ["choose which sheet tab the campaign reads"]
+    return row, []
+
+
+def remove_campaign(existing: list[dict], cid: str) -> tuple[list[dict], str]:
+    """campaigns.json's list without `cid` -> (rows, problem). The ledger and past runs keep
+    the id they recorded; only the lane's configuration goes."""
+    kept = [c for c in existing if str(c.get("id") or "") != cid]
+    if len(kept) == len(existing):
+        return existing, f"there is no campaign '{cid}'"
+    return kept, ""
 
 
 # ───────────────────────── selection ─────────────────────────

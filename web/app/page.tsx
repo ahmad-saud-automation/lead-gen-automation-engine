@@ -1,6 +1,15 @@
-import { redirect } from "next/navigation";
+import { Dashboard } from "@/components/dashboard";
+import { TopBar } from "@/components/shell";
 
-// Campaigns is where the work starts, as it was in V2.
-export default function Home() {
-  redirect("/campaigns");
+export const metadata = { title: "Dashboard · Lead Gen Engine" };
+
+export default function DashboardPage() {
+  return (
+    <>
+      <TopBar title="Dashboard" sub="Lead Gen Engine" />
+      <div className="page">
+        <Dashboard />
+      </div>
+    </>
+  );
 }

@@ -46,6 +46,7 @@ REM --- V2: field map, rules, campaigns, dynamic labels, runner ---
 call :run eval_fieldmap
 call :run eval_rules
 call :run eval_campaigns
+call :run eval_campaign_admin
 call :run eval_labels
 call :run eval_runner
 

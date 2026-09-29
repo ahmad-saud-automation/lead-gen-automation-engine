@@ -455,8 +455,12 @@ def _append_history(job: dict) -> None:
     hist = _read_json(HISTORY_FILE, [])
     hist.insert(0, {
         "run_id": job["run_id"], "when": job["started"], "status": job["status"],
+        # which lane, so the campaign list can show each lane's last run
+        "kind": job.get("kind", "run"), "campaign": job.get("campaign", ""),
+        "campaign_name": job.get("campaign_name", ""), "source_run": job.get("source_run"),
         "test_mode": job["test_mode"], "leads": job["total"], "found": c["found"],
         "held": c["held"], "not_found": c["not_found"], "no_website": c["no_website"],
+        "pushed": c.get("pushed", 0), "push_failed": c.get("push_failed", 0),
         "credits": cb["total_credits"], "spent_usd": cb["total_usd"],
     })
     _write_json(HISTORY_FILE, hist[:KEEP_RUNS])
@@ -706,6 +710,42 @@ def save_globals(patch: dict) -> dict:
     return _write_campaigns_raw(body)
 
 
+def create_campaign(req: dict) -> dict:
+    """Add a lane — blank, or a copy of `copy_from`. It starts switched off and checked last."""
+    body = _read_campaigns_raw()
+    rows = body.get("campaigns") or []
+    src = None
+    if req.get("copy_from"):
+        src = next((c for c in rows if str(c.get("id")) == str(req["copy_from"])), None)
+        if src is None:
+            return {"ok": False, "issues": [{"campaign": "", "issue": f"no campaign '{req['copy_from']}' to copy"}]}
+    row, problems = campaigns_mod.new_campaign(
+        rows, name=str(req.get("name") or ""), tab=str(req.get("tab") or ""),
+        fieldmap=str(req.get("fieldmap") or ""), cid=str(req.get("id") or ""), copy_from=src)
+    if problems:
+        return {"ok": False, "issues": [{"campaign": str(req.get("id") or ""), "issue": p} for p in problems]}
+    body["campaigns"] = rows + [row]
+    out = _write_campaigns_raw(body)
+    out["campaign"] = row["id"]
+    return out
+
+
+def delete_campaign(cid: str) -> dict:
+    """Remove a lane's configuration. Refused while it is running; its past runs, events and
+    ledger rows keep the id they recorded."""
+    cid = str(cid or "").strip()
+    if any(j.get("status") == "running" and j.get("campaign") == cid for j in JOBS.values()):
+        return {"ok": False, "issues": [{"campaign": cid, "issue": "it is running — stop the run first"}]}
+    body = _read_campaigns_raw()
+    rows, problem = campaigns_mod.remove_campaign(body.get("campaigns") or [], cid)
+    if problem:
+        return {"ok": False, "issues": [{"campaign": cid, "issue": problem}]}
+    body["campaigns"] = rows
+    out = _write_campaigns_raw(body)
+    out["campaign"] = cid
+    return out
+
+
 def fieldmap_detail(tab: str = "") -> dict:
     """Everything the mapping screen needs: the engine's fields, what they are mapped to
     today, the sheet's real headers, and how full each column actually is.
@@ -949,6 +989,7 @@ def _push_worker(push_id: str, rows: list[dict], cfg: dict, *, camp=None, fm=Non
     job["stage"] = "done"
     job["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     _persist(job)
+    _append_history(job)            # so a push can be found again after leaving its page
     _prune_runs()
 
 
@@ -1006,6 +1047,7 @@ def start_push(run_id: str = "", *, test_mode: bool = True, confirm: bool = Fals
         "started": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "cancel": False,
     }
     job["campaign"] = camp.id if camp else ""
+    job["campaign_name"] = camp.name if camp else snap.get("campaign_name", "")
     job["held_not_send_ready"] = held
     JOBS[push_id] = job
     _persist(job)
@@ -1596,6 +1638,16 @@ async def api_campaign_save(request: Request):
 @app.post("/api/campaigns/globals")
 async def api_campaign_globals(request: Request):
     return save_globals(await request.json())
+
+
+@app.post("/api/campaigns/create")
+async def api_campaign_create(request: Request):
+    return create_campaign(await request.json())
+
+
+@app.post("/api/campaigns/delete")
+async def api_campaign_delete(request: Request):
+    return delete_campaign(str((await request.json()).get("id") or ""))
 
 
 @app.get("/api/fieldmap/detail")

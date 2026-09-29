@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { Confirm, Modal } from "@/components/modal";
+import { ResultsTable } from "@/components/results-table";
 import { Card, Checks, Chip, ErrorBox, Loading, Seg, Tile } from "@/components/ui";
 import { getJson, postJson } from "@/lib/client-api";
 import { money, num } from "@/lib/format";
@@ -289,6 +290,19 @@ export function RunMonitor({ runId }: { runId?: string }) {
           )}
         </div>
       </Card>
+
+      {!isPush ? (
+        <Card
+          title="Results"
+          label={`${num((run.results ?? []).filter((r) => r.found_email).length)} found of ${num(run.results?.length)}`}
+          foot={<>Click a row for the patterns tried, the directors and the full ice breaker. <a className="btn-link" href={`/api/results/download?run_id=${id}`}>Download CSV</a></>}
+        >
+          {run.test_mode ? (
+            <ErrorBox soft title="Test run — simulated addresses" detail="Generated from a name pattern and never checked against a mail server. Never mail them." />
+          ) : null}
+          <ResultsTable rows={run.results ?? []} simulated={run.test_mode} />
+        </Card>
+      ) : null}
 
       {preview ? (
         <Modal label="Review the push" wide onClose={() => setPreview(null)}>
