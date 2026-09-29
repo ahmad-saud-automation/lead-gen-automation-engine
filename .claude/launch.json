@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "engine",
-      "runtimeExecutable": "C:\\ClaudeDeps\\ytdash-venv\\Scripts\\python.exe",
+      "runtimeExecutable": "C:\\ClaudeDeps\\leadgen-venv\\Scripts\\python.exe",
       "runtimeArgs": ["-m", "uvicorn", "webapp.server:app", "--host", "127.0.0.1", "--port", "8771"],
       "port": 8771
     },
