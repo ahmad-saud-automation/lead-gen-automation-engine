@@ -70,6 +70,24 @@ export const FIELD_WORDS: Record<string, FieldWord> = {
 
 export const fieldName = (f: string): string => FIELD_WORDS[f]?.name ?? f;
 
+/* ── a campaign's filters as one sentence (the wizard's Review) ── */
+type RuleLike = { field?: string; op?: string; value?: unknown };
+function clauseWords(c: RuleLike): string {
+  const f = fieldName(c.field ?? "").trim() || "?";
+  const op = OP_WORDS[c.op ?? "equals"] ?? c.op ?? "";
+  if (c.op === "is_blank" || c.op === "is_not_blank") return `${f} ${op}`;
+  if (c.op === "between" && Array.isArray(c.value)) return `${f} is between ${c.value[0]} and ${c.value[1]}`;
+  const v = Array.isArray(c.value) ? c.value.join(", ") : String(c.value ?? "");
+  return `${f} ${op} ${v || "…"}`;
+}
+export function rulesSentence(rules: { all?: RuleLike[]; any?: RuleLike[]; none?: RuleLike[] } | undefined): string {
+  const parts: string[] = [];
+  if (rules?.all?.length) parts.push(rules.all.map(clauseWords).join(", and "));
+  if (rules?.any?.length) parts.push(`at least one of: ${rules.any.map(clauseWords).join(" / ")}`);
+  if (rules?.none?.length) parts.push(`never where ${rules.none.map(clauseWords).join(" or ")}`);
+  return parts.join("; ");
+}
+
 /* ── what happened to a lead (core/pipeline.py statuses) ── */
 export const RESULT_WORDS: Record<string, { text: string; tone: "good" | "warn" | "bad" | undefined }> = {
   email_found: { text: "Email found", tone: "good" },

@@ -8,10 +8,11 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ExtraInfo } from "@/components/campaign/extra-info";
+import { ManySection, SendSection } from "@/components/campaign/sections";
 import { DEFAULT_SCHEDULE, WhenSection } from "@/components/campaign/when";
 import { WhoSection, type SourceOption } from "@/components/campaign/who";
 import { Confirm } from "@/components/modal";
-import { Card, Checklist, Field, Note, PageHead, Pill, Progress, Step, Switch, SwitchRow } from "@/components/u";
+import { Card, Checklist, Field, PageHead, Pill, Progress, Switch } from "@/components/u";
 import { ErrorBox, Loading } from "@/components/ui";
 import { getJson, postJson } from "@/lib/client-api";
 import { money, num } from "@/lib/format";
@@ -52,7 +53,6 @@ export function CampaignPage({ id }: { id: string }) {
   const [counting, setCounting] = useState(false);
   const [ready, setReady] = useState<Readiness | null>(null);
   const [inst, setInst] = useState<InstantlyOptions | null>(null);
-  const [pasteId, setPasteId] = useState(false);
   const [lastRun, setLastRun] = useState<HistoryRow | null>(null);
   const [saving, setSaving] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
@@ -208,8 +208,6 @@ export function CampaignPage({ id }: { id: string }) {
     enabled: !!c.enabled, instantly_campaign_id: c.instantly?.campaign_id ?? "",
     schedule: { via: sched.via, test_mode: sched.test_mode, active: sched.enabled && !!c.enabled, summary: "", next_run: "", problems: [] },
   });
-  const instId = c.instantly?.campaign_id ?? "";
-  const instKnown = inst?.campaigns.some((x) => x.id === instId);
   const companyHeader = src?.check?.resolved?.company_name ?? "";
   const sample = src?.sample?.[0];
   const perRun = Number(c.limits?.per_run ?? 50);
@@ -276,61 +274,10 @@ export function CampaignPage({ id }: { id: string }) {
         <WhoSection c={c} set={set} sources={sources} headers={src?.headers ?? []} resolved={src?.check?.resolved ?? {}}
           counts={counts} counting={counting} />
 
-        <Step n={2} id="sec-many" title="How many" question="How fast should it work?">
-          <div className="u-fgrid">
-            <Field label="Leads per run" hint="How many leads one run works on.">
-              <input className="u-input" type="number" min={1} aria-label="Leads per run" value={c.limits?.per_run ?? 50}
-                onChange={(e) => setIn("limits", { per_run: Number(e.target.value) || 0 })} />
-            </Field>
-            <Field label="Leads per day" hint="Stops after this many in a day. 0 = no limit.">
-              <input className="u-input" type="number" min={0} aria-label="Leads per day" value={c.limits?.per_day ?? 100}
-                onChange={(e) => setIn("limits", { per_day: Number(e.target.value) || 0 })} />
-            </Field>
-            <Field label="Most it may spend per run ($)" hint="The run stops before it costs more.">
-              <input className="u-input" type="number" min={0} step={0.5} aria-label="Most it may spend per run" value={c.limits?.max_spend_usd ?? 2}
-                onChange={(e) => setIn("limits", { max_spend_usd: Number(e.target.value) || 0 })} />
-            </Field>
-          </div>
-          {counts && !counts.error ? (
-            <div style={{ marginTop: 14 }}>
-              <Note>
-                At {num(counts.per_run)} per run, a live run costs about <b>{money(counts.est_cost_per_run)}</b> (email checks)
-                {c.limits?.per_day ? <>, and a full day about <b>{money(counts.est_cost_per_day)}</b></> : null}.
-              </Note>
-            </div>
-          ) : null}
-        </Step>
+        <ManySection c={c} setIn={setIn} counts={counts} />
 
-        <Step n={3} id="sec-send" title="Send to" question="Where do the found leads go?">
-          <div className="u-fgrid two">
-            <Field label="Instantly campaign" bad={!!inst && !inst.ok} hint={inst && !inst.ok
-              ? <>{inst.detail}. <Link className="u-link" href="/settings">Settings</Link> · <button type="button" className="u-link" onClick={() => setPasteId(true)}>paste an ID instead</button></>
-              : <>The list comes from your Instantly account. <button type="button" className="u-link" onClick={loadInstantly}>Refresh</button> · <button type="button" className="u-link" onClick={() => setPasteId(!pasteId)}>{pasteId ? "pick from the list" : "paste an ID instead"}</button></>}>
-              {pasteId || (inst && !inst.ok) ? (
-                <input id="inst-pick" className="u-input u-mono" aria-label="Instantly campaign ID" placeholder="00000000-0000-0000-0000-000000000000"
-                  value={instId} onChange={(e) => setIn("instantly", { campaign_id: e.target.value.trim() })} />
-              ) : (
-                <select id="inst-pick" className="u-input" aria-label="Instantly campaign" value={instId} disabled={!inst}
-                  onChange={(e) => setIn("instantly", { campaign_id: e.target.value })}>
-                  <option value="">{inst ? "— choose one —" : "Loading your Instantly campaigns…"}</option>
-                  {instId && inst && !instKnown ? <option value={instId}>{instId} (not found in your Instantly)</option> : null}
-                  {(inst?.campaigns ?? []).map((x) => <option key={x.id} value={x.id}>{x.name} — {x.status}</option>)}
-                </select>
-              )}
-            </Field>
-          </div>
-          <div style={{ marginTop: 10 }}>
-            <SwitchRow title="Send to Instantly automatically"
-              desc="Off = you review each batch first, on the run's page. Turn on only when you trust this campaign."
-              checked={!!c.auto_push} onChange={(v) => (v ? setConfirm("autopush") : set({ auto_push: false }))} />
-            <SwitchRow title="Update my Google Sheet with the results"
-              desc={(c.tab ?? "").startsWith("import:")
-                ? "This campaign reads an uploaded file, so there is no sheet to update."
-                : "Writes the email found, its check result and “sent” onto each row, so nobody is contacted twice."}
-              checked={c.writeback?.enabled !== false} disabled={(c.tab ?? "").startsWith("import:")}
-              onChange={(v) => setIn("writeback", { enabled: v })} />
-          </div>
-        </Step>
+        <SendSection c={c} setIn={setIn} inst={inst} reload={loadInstantly}
+          onAutoPush={(v) => (v ? setConfirm("autopush") : set({ auto_push: false }))} />
 
         <WhenSection s={sched} set={(p) => setSched((x) => ({ ...x, ...p }))} />
 

@@ -145,6 +145,7 @@ export type CampaignSummary = {
   labels: number;
   auto_push: boolean;
   label_issues: string[];
+  rule_count?: number;
   schedule?: { via: "app" | "windows"; test_mode: boolean; active: boolean; summary: string; next_run: string; problems: string[] };
 };
 

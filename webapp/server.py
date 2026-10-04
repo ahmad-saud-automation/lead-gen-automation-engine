@@ -693,6 +693,7 @@ def campaigns_view() -> dict:
             "max_spend_usd": c.max_spend_usd,
             "instantly_campaign_id": c.instantly_campaign_id,
             "labels": len(c.labels), "auto_push": c.auto_push,
+            "rule_count": sum(len(c.rules.get(b) or []) for b in ("all", "any", "none")),
             "label_issues": instantly_mod.validate_label_specs(c.labels or None),
         } for c in camps],
     }

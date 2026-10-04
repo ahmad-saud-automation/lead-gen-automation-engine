@@ -12,9 +12,24 @@ User: the screens feel technical and noisy. Agreed order: research → architect
   4-step wizard, plain word list, nothing removed (§6 maps every control).
 - **Clickable sample built**: `docs/sample-ui/index.html` (one file, fake data, same theme, works at
   phone width, driven in headless Chrome: all pages + clicks + drags pass). Waiting for his feedback.
-- **Open decision**: how each technical setting is shown (finding-emails presets + ladder, column
-  matching, extra info for Instantly drag-and-drop, filters, Instantly options, speed presets…). The
-  sample shows my proposals marked "Proposal". Build nothing real until he answers.
+- **He said "ok to all" (sample + all 11 technical-setting proposals) and "start building" on 2026-10-05.**
+- **BUILD IN PROGRESS on branch `v5`** (7 phases). Design system = `web/app/ux.css` (`u-` classes) +
+  `web/components/u.tsx`; plain words in `web/lib/words.ts`; status words `web/lib/status.ts`;
+  pointer drag `web/lib/drag.ts` (HTML5 drag broke after the first drag in Chrome and never works on
+  phones). Old screens stay reachable until each is replaced.
+  | Phase | Status |
+  |---|---|
+  | 1 Foundation: engine (`core/connections.py`, sheet tabs, connection tests, `/api/campaigns/preview` live counts, readiness, reorder, schedule preview, 60 s shared sheet read for display) + menu + look | ✅ `5a59f23`, `4e4c0c1` |
+  | 2 Campaign page `/campaigns/[id]` (`components/campaign/*`) | ✅ driven on real data |
+  | 3 Campaigns list + wizard `/campaigns/new` | ⏳ |
+  | 4 Leads `/leads`, `/leads/[tab]` (sources, upload, column matching) | ⏳ |
+  | 5 Activity `/activity`, `/activity/[id]` (`runHref` in lib/status.ts already points there) | ⏳ |
+  | 6 Home + Settings | ⏳ |
+  | 7 Old routes redirect, delete old components, full test pass, merge | ⏳ |
+- Fixed on the way: per-campaign "write back" switch was never read by the engine (now honoured);
+  a switched-off campaign may run a FREE test; Instantly "N found" count matched the dropdown.
+- Driving screens: headless Chrome via `docpipeline-venv` + `launch(channel="chrome")`; any test save
+  to `config/campaigns.json` is undone with `git checkout -- config/campaigns.json`.
 
 ## ▶ THEN — choose the server, then deploy (docs/DEPLOY.md)
 
