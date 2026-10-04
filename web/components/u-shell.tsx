@@ -8,9 +8,11 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Icon, type IconName } from "@/components/icons";
-import { THEME_KEY } from "@/components/shell";
 import { money } from "@/lib/format";
 import type { CampaignsView, HistoryRow } from "@/lib/types";
+
+/** Where the light/dark choice is kept. app/layout.tsx reads it before the first paint. */
+export const THEME_KEY = "leadgen:theme";
 
 type Place = { href: string; label: string; icon: IconName; owns: string[] };
 

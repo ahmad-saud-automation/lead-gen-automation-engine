@@ -1,6 +1,7 @@
-# UX redesign — architecture (for approval, NOT built)
+# UX redesign — architecture
 
-Written 2026-10-04. Goal from the user: *"less noisy, production friendly, easy to use like a
+**Status: approved 2026-10-04 and BUILT 2026-10-05 (branch v5, merged to main).** See STATE.md
+"V5" for where each page lives. Written 2026-10-04. Goal from the user: *"less noisy, production friendly, easy to use like a
 native app — without nerfing any functionality."* Problem in his words: every section "feels a
 little technical"; a new user would never understand "field map file", "lane", "limits".
 

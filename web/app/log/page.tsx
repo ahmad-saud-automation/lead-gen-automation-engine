@@ -1,15 +1,6 @@
-import { LogViewer } from "@/components/log-view";
-import { TopBar } from "@/components/shell";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Log · Lead Gen Engine" };
-
-export default function LogPage() {
-  return (
-    <>
-      <TopBar title="Log" sub="Every event, every run" />
-      <div className="page">
-        <LogViewer />
-      </div>
-    </>
-  );
+// V4 address. The log is now Activity's search and each run's "Step by step" tab.
+export default function OldLog() {
+  redirect("/activity");
 }

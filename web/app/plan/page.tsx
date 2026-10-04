@@ -1,15 +1,6 @@
-import { PlanPreview } from "@/components/plan-preview";
-import { TopBar } from "@/components/shell";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Plan preview · Lead Gen Engine" };
-
-export default function PlanPage() {
-  return (
-    <>
-      <TopBar title="Plan preview" sub="Costs nothing" />
-      <div className="page">
-        <PlanPreview />
-      </div>
-    </>
-  );
+// V3 address. The plan's counts are now on the Campaigns list and each campaign's Who section.
+export default function OldPlan() {
+  redirect("/campaigns");
 }

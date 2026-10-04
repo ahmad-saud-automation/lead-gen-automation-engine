@@ -1,15 +1,6 @@
-import { HistoryList } from "@/components/history-list";
-import { TopBar } from "@/components/shell";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "History · Lead Gen Engine" };
-
-export default function HistoryPage() {
-  return (
-    <>
-      <TopBar title="History" sub="Every run and push" />
-      <div className="page">
-        <HistoryList />
-      </div>
-    </>
-  );
+// V4 address. History is now Activity.
+export default function OldHistory() {
+  redirect("/activity");
 }

@@ -1,35 +1,48 @@
 # STATE — Lead Gen Automation Engine
 
-Handoff so a new session does not re-explore. **Last updated 2026-10-04.**
+Handoff so a new session does not re-explore. **Last updated 2026-10-05.**
 
 ---
 
-## ▶ NOW — UX redesign (2026-10-04)
+## ✅ V5 — the easy-to-use screens (2026-10-04 → 2026-10-05, merged to `main`)
 
-User: the screens feel technical and noisy. Agreed order: research → architecture → sample → build.
-- **Architecture APPROVED** ("ok to all"): `docs/UX-REDESIGN.md` — 5 pages (Home · Campaigns · Leads ·
-  Activity · Settings), campaign page = status card + Who / How many / Send to / When + closed Advanced,
-  4-step wizard, plain word list, nothing removed (§6 maps every control).
-- **Clickable sample built**: `docs/sample-ui/index.html` (one file, fake data, same theme, works at
-  phone width, driven in headless Chrome: all pages + clicks + drags pass). Waiting for his feedback.
-- **He said "ok to all" (sample + all 11 technical-setting proposals) and "start building" on 2026-10-05.**
-- **BUILD IN PROGRESS on branch `v5`** (7 phases). Design system = `web/app/ux.css` (`u-` classes) +
-  `web/components/u.tsx`; plain words in `web/lib/words.ts`; status words `web/lib/status.ts`;
-  pointer drag `web/lib/drag.ts` (HTML5 drag broke after the first drag in Chrome and never works on
-  phones). Old screens stay reachable until each is replaced.
-  | Phase | Status |
-  |---|---|
-  | 1 Foundation: engine (`core/connections.py`, sheet tabs, connection tests, `/api/campaigns/preview` live counts, readiness, reorder, schedule preview, 60 s shared sheet read for display) + menu + look | ✅ `5a59f23`, `4e4c0c1` |
-  | 2 Campaign page `/campaigns/[id]` (`components/campaign/*`) | ✅ driven on real data |
-  | 3 Campaigns list + wizard `/campaigns/new` | ⏳ |
-  | 4 Leads `/leads`, `/leads/[tab]` (sources, upload, column matching) | ⏳ |
-  | 5 Activity `/activity`, `/activity/[id]` (`runHref` in lib/status.ts already points there) | ⏳ |
-  | 6 Home + Settings | ⏳ |
-  | 7 Old routes redirect, delete old components, full test pass, merge | ⏳ |
-- Fixed on the way: per-campaign "write back" switch was never read by the engine (now honoured);
-  a switched-off campaign may run a FREE test; Instantly "N found" count matched the dropdown.
-- Driving screens: headless Chrome via `docpipeline-venv` + `launch(channel="chrome")`; any test save
-  to `config/campaigns.json` is undone with `git checkout -- config/campaigns.json`.
+User: the screens felt technical and noisy. Order he set: research → architecture → sample → build.
+Architecture `docs/UX-REDESIGN.md` and the clickable sample `docs/sample-ui/index.html` were both
+approved ("ok to all", incl. all 11 technical-setting proposals), then built page by page.
+
+| Place | Route | Code |
+|---|---|---|
+| Home — setup checklist for a new user, then today + needs-you | `/` | `components/home.tsx` |
+| Campaigns — status words, leads left, drag order | `/campaigns` | `components/campaign/list.tsx` |
+| One campaign — status card + ready-to-go-live checklist with Fix, Who / How many / Send to / When, Advanced (extra info for Instantly, drag-and-drop) | `/campaigns/[id]` | `components/campaign/{page,who,sections,when,extra-info}.tsx` |
+| New campaign wizard (ends with a free test) | `/campaigns/new[?tab=]` | `components/campaign/wizard.tsx` |
+| Leads — sheet tabs + uploads; one source: health, column matching in plain groups, first rows | `/leads`, `/leads/[tab]` | `components/leads/*` |
+| Activity — runs + sends in sentences, search inside steps; one run: live progress, leads, Send to Instantly review, step by step | `/activity`, `/activity/[id]` | `components/activity/*` |
+| Settings — Connections (Test buttons), Finding emails (3 styles + ladder), limits, lead safety, login, Advanced | `/settings` | `components/settings/page.tsx` |
+
+- Design system: `web/app/ux.css` (`u-` classes) + `web/components/u.tsx`; plain words
+  `web/lib/words.ts`; status words + `runHref` `web/lib/status.ts`; pointer drag `web/lib/drag.ts`
+  (HTML5 drag stopped starting after the first drag in Chrome, and never works on phones).
+- Old addresses forward: /plan → /campaigns, /runs?run= → /activity/<id>, /history and /log →
+  /activity, /import?tab= and /fieldmap?tab= → /leads/<tab>. 15 old components deleted.
+- New engine pieces: `core/connections.py` (free key tests, Instantly campaigns + lead lists),
+  `/api/sheets/info`, `/api/instantly/options`, `/api/connections/test`, `/api/campaigns/preview`
+  (live counts for an unsaved campaign), `/api/campaigns/readiness`, `/api/campaigns/reorder`,
+  `/api/schedules/preview`; display-only screens share ONE sheet read for 60 s
+  (`_read_tab_for_display`) — runs and sends always read fresh.
+- **Bugs found and fixed while building (all real, all silent before):**
+  1. A per-campaign "write back to the sheet" switch was saved but never read by the engine.
+  2. **Tabs whose name ends in a space ("Construction ", "Clinics " — 16,683 and 16,561 rows) could
+     never be read**: names were trimmed and sent to Google unquoted. Kept exact + `sheets.a1_tab`.
+  3. **A free test's invented addresses passed the send gate** (the test stub says "ok" to
+     first.last@), so a live push of a test run would have mailed them. The engine now refuses it.
+  4. The campaign page read the 21,714-row sheet four times at once (~15 s); now one shared read.
+- Tests: **209 checks across 24 files**, all offline, all passing (2026-10-05). Every screen was
+  driven in headless Chrome on the real data (light + dark, phone width, no console errors).
+- Driving screens: `docpipeline-venv` Playwright with `launch(channel="chrome")` (no Playwright
+  browser download on this profile). Undo test saves with `git checkout -- config/campaigns.json`.
+- Seen in the real data: 21,250 of 21,714 Practices rows have no ice breaker yet, so with "hold
+  leads without an ice breaker" on, those leads wait.
 
 ## ▶ THEN — choose the server, then deploy (docs/DEPLOY.md)
 
