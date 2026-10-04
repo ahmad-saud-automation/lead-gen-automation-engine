@@ -50,6 +50,7 @@ from core import rules as rules_mod  # noqa: E402
 from core import imports as imports_mod  # noqa: E402
 from core import schedules as schedules_mod  # noqa: E402
 from core import auth as auth_mod  # noqa: E402
+from core import connections as conn_mod  # noqa: E402
 
 WEBAPP_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "config"
@@ -421,6 +422,8 @@ def _worker(run_id: str, firms: list[dict], cfg: dict, *, campaign=None, fm=None
         emit("", "sheet", "skip", "test mode - the sheet is never written")
     elif campaign is not None and not tab_source(cfg, campaign.tab)["live"]:
         emit("", "sheet", "skip", f"'{campaign.tab}' is a file, not the live sheet - nothing is written back")
+    elif campaign is not None and not _lane_writes_back(campaign):
+        emit("", "sheet", "skip", "this campaign's 'Update my Google Sheet' is off - nothing is written back")
     else:
         write_row = _open_sheet_writer(cfg, emit, tab=(campaign.tab if campaign else ""), fm=fm)
     led = ledger_mod.Ledger(LEDGER_FILE) if cfg.get("use_ledger", True) else None
@@ -517,6 +520,14 @@ def start_run(test_mode: bool) -> dict:
     _persist(job)
     threading.Thread(target=_worker, args=(run_id, firms, cfg), daemon=True).start()
     return _snapshot(job)
+
+
+def _lane_writes_back(camp) -> bool:
+    """A campaign's own "Update my Google Sheet" switch (`writeback.enabled`, on unless set to
+    false). Until 2026-10-05 the editor saved it but nothing read it: only the global
+    `sheet_writeback` counted, so switching it off for one campaign changed nothing. Both must
+    now be on for a write."""
+    return (camp.writeback or {}).get("enabled", True) is not False
 
 
 def _open_sheet_writer(cfg: dict, emit, *, tab: str = "", fm=None) -> object | None:
@@ -861,8 +872,11 @@ def start_campaign_run(campaign_id: str, *, test_mode: bool = True) -> dict:
     camp = next((c for c in loaded["campaigns"] if c.id == campaign_id), None)
     if not camp:
         return {"error": f"No campaign '{campaign_id}' in config/campaigns.json."}
-    if not camp.enabled:
-        return {"error": f"Campaign '{campaign_id}' is disabled. Enable it in config/campaigns.json."}
+    # A switched-off campaign may still do a FREE test (no API call, no ledger, no sheet write),
+    # so a new campaign can be tried before it is turned on. A live run needs it on.
+    if not camp.enabled and not test_mode:
+        return {"error": f"'{camp.name}' is switched off. Switch it on before a live run "
+                         "(a free test works while it is off)."}
     # a click and a schedule (or two clicks) must not work the same rows twice at once
     if any(j.get("status") == "running" and j.get("campaign") == camp.id for j in JOBS.values()):
         return {"error": f"'{camp.name}' is already running. Wait for it to finish, or stop it."}
@@ -962,6 +976,10 @@ def _push_worker(push_id: str, rows: list[dict], cfg: dict, *, camp=None, fm=Non
         writeback = False
         if not test_mode:
             emit("", "sheet", "skip", f"'{camp.tab}' is a file, not the live sheet - nothing is written back")
+    elif camp is not None and not _lane_writes_back(camp):
+        writeback = False
+        if not test_mode:
+            emit("", "sheet", "skip", "this campaign's 'Update my Google Sheet' is off - nothing is written back")
     elif not test_mode:
         write_row = _open_sheet_writer(cfg, emit, tab=(camp.tab if camp else ""), fm=fm)
     led = ledger_mod.Ledger(LEDGER_FILE) if cfg.get("use_ledger", True) else None
@@ -2126,6 +2144,174 @@ def api_campaign_schedule(id: str):
 async def api_campaign_schedule_save(request: Request):
     b = await request.json()
     return save_lane_schedule(str(b.get("id") or ""), b.get("schedule") or {})
+
+
+# ── V5 screens: dropdowns, connection tests, live counts, readiness, order ──
+
+def sheet_info(cfg: dict | None = None) -> dict:
+    """The Google Sheet's title and tab names (one metadata read). Without a service-account
+    file the link-export route cannot list tabs, so the tabs the campaigns use are offered."""
+    cfg = cfg or load_config()
+    used = sorted({c.tab for c in runner_mod.load_config_dir(CONFIG_DIR)["campaigns"]
+                   if c.tab and not imports_mod.is_import_tab(c.tab)})
+    parsed = sheets_mod.parse_sheet_url(cfg.get("sheet_url", ""))
+    if not parsed["doc_id"]:
+        return {"ok": False, "detail": "no Google Sheet link saved yet", "title": "", "tabs": used}
+    sa = str(cfg.get("sheet_service_account_file") or "").strip()
+    if not sa:
+        return {"ok": False, "detail": "add the Google key file to list every tab", "title": "", "tabs": used}
+    try:
+        info = sheets_mod.SheetsClient(sa).info(parsed["doc_id"])
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "detail": f"could not open the sheet: {e}", "title": "", "tabs": used}
+    n = len(info["tabs"])
+    return {"ok": True, "detail": f"“{info['title']}” · {n} tab{'s' if n != 1 else ''}", **info}
+
+
+def test_connection(service: str) -> dict:
+    """One free read per service; never spends a credit."""
+    cfg = load_config()
+    if service == "sheet":
+        r = sheet_info(cfg)
+        return {"ok": r["ok"], "detail": r["detail"]}
+    if service == "millionverifier":
+        return conn_mod.test_millionverifier(_mv_key(cfg))
+    if service == "instantly":
+        return conn_mod.test_instantly(str(cfg.get("instantly_api_key") or "").strip())
+    if service == "anymailfinder":
+        return conn_mod.test_anymailfinder(str(cfg.get("anymailfinder_api_key") or "").strip())
+    if service == "openai":
+        return conn_mod.test_openai(str(cfg.get("openai_api_key") or "").strip())
+    if service == "icypeas":
+        has = bool(str(cfg.get("icypeas_api_key") or "").strip())
+        return {"ok": None, "detail": ("saved — Icypeas has no free test; a refused key shows up in "
+                                       "Activity after its first lookup") if has else "no Icypeas key saved yet"}
+    return {"ok": False, "detail": f"unknown service '{service}'"}
+
+
+def _fieldmap_for_raw(camp, loaded: dict, heads: list[str]):
+    if camp.fieldmap and camp.fieldmap not in loaded["fieldmaps"]:
+        # a new campaign can name a map file no saved campaign has loaded yet
+        loaded["fieldmaps"][camp.fieldmap] = fieldmap_mod.load(CONFIG_DIR / camp.fieldmap)
+    return runner_mod.fieldmap_for(camp, loaded["fieldmaps"], heads)
+
+
+def campaign_preview(raw: dict) -> dict:
+    """Live counts for a campaign as it stands on screen, saved or not. Free: reads the source
+    and applies the filters, nothing more. Other campaigns higher in the order may still claim
+    some of these rows; the Campaigns list shows the split."""
+    camp = campaigns_mod.Campaign(raw or {})
+    if not camp.tab:
+        return {"error": "Choose a lead source first."}
+    problems = rules_mod.validate_rules(camp.rules)
+    if problems:
+        return {"error": "A filter is not finished: " + "; ".join(problems)}
+    cfg = load_config()
+    try:
+        rows = _read_tab(cfg, camp.tab)
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"Could not read '{camp.tab}': {e}"}
+    heads = runner_mod.headers_of(rows)
+    loaded = runner_mod.load_config_dir(CONFIG_DIR)
+    fm = _fieldmap_for_raw(camp, loaded, heads)
+    led = ledger_mod.Ledger(LEDGER_FILE) if cfg.get("use_ledger", True) else None
+    prep = runner_mod.prepare(camp, rows, fm, ledger=led, cfg=cfg)
+    rate = float(cfg.get("mv_per_verification_usd", 0) or 0)
+    return {"rows": len(rows), "matched": prep["matched"], "not_contacted": prep["available"],
+            "done_before": prep["blocked_by_ledger"], "take": prep["selected"],
+            "day_remaining": prep["day_remaining"], "per_run": camp.per_run,
+            # the same estimate the plan uses: about 2 checks a lead
+            "est_cost_per_run": round(camp.per_run * 2 * rate, 2),
+            "est_cost_per_day": round((camp.per_day or camp.per_run) * 2 * rate, 2)}
+
+
+def campaign_readiness(cid: str) -> dict:
+    """The "Ready to go live" checklist. Each item says what to fix and which section fixes it."""
+    cfg = load_config()
+    loaded = runner_mod.load_config_dir(CONFIG_DIR)
+    camp = next((c for c in loaded["campaigns"] if c.id == cid), None)
+    if camp is None:
+        return {"error": f"No campaign '{cid}'."}
+    items = []
+
+    def add(ok, text, fix=""):
+        items.append({"ok": bool(ok), "text": text, "fix": "" if ok else fix})
+
+    problems = [i["issue"] for i in campaigns_mod.validate([camp])]
+    add(not problems, "Settings are complete" if not problems else "Settings problem: " + "; ".join(problems), "who")
+    try:
+        rows = _read_tab(cfg, camp.tab)
+        heads = runner_mod.headers_of(rows)
+        fm = _fieldmap_for_raw(camp, loaded, heads)
+        check = runner_mod.check_fieldmap(fm, heads)
+        led = ledger_mod.Ledger(LEDGER_FILE) if cfg.get("use_ledger", True) else None
+        prep = runner_mod.prepare(camp, rows, fm, ledger=led, cfg=cfg)
+        add(prep["available"] > 0, f"Leads to work on: {prep['available']:,} fit the filters and were never contacted"
+            if prep["available"] else "No leads left that fit the filters", "who")
+        add(check["ok"], "Every column it needs is matched" if check["ok"]
+            else "Column matching: " + "; ".join(check["blocking"]), "columns")
+    except Exception as e:  # noqa: BLE001
+        add(False, f"The lead source could not be read: {e}", "who")
+    hist = _read_json(HISTORY_FILE, [])
+    tested = any(h.get("campaign") == cid and h.get("kind", "run") == "run" and h.get("status") == "finished"
+                 for h in hist)
+    add(tested, "A test run finished" if tested else "No test run yet — run a free test first", "test")
+    add(bool(_mv_key(cfg)), "Email checking (MillionVerifier) is connected" if _mv_key(cfg)
+        else "Email checking is not connected", "settings")
+    has_key = bool(str(cfg.get("instantly_api_key") or "").strip())
+    add(has_key, "Instantly is connected" if has_key else "Instantly is not connected", "settings")
+    add(bool(camp.instantly_campaign_id), "Instantly campaign chosen" if camp.instantly_campaign_id
+        else "No Instantly campaign chosen", "send")
+    add(camp.enabled, "Campaign is switched on" if camp.enabled else "Campaign is switched off", "on")
+    return {"campaign": cid, "items": items, "done": sum(i["ok"] for i in items), "total": len(items)}
+
+
+def reorder_campaigns(ids: list[str]) -> dict:
+    """The Campaigns list's drag order becomes priority: first = 10, then 20, 30 … A lane not
+    named keeps its place after the named ones."""
+    body = _read_campaigns_raw()
+    rows = body.get("campaigns") or []
+    known = {str(c.get("id")) for c in rows}
+    order = [i for i in ids if i in known]
+    if len(set(order)) != len(order) or not order:
+        return {"ok": False, "issues": [{"campaign": "", "issue": "the order must name each campaign once"}]}
+    rest = [str(c.get("id")) for c in sorted(rows, key=lambda c: int(c.get("priority", 100) or 0))
+            if str(c.get("id")) not in order]
+    prio = {cid: (n + 1) * 10 for n, cid in enumerate(order + rest)}
+    for c in rows:
+        c["priority"] = prio[str(c.get("id"))]
+    body["campaigns"] = rows
+    return _write_campaigns_raw(body)
+
+
+@app.get("/api/sheets/info")
+def api_sheet_info():
+    return sheet_info()
+
+
+@app.get("/api/instantly/options")
+def api_instantly_options():
+    return conn_mod.instantly_options(str(load_config().get("instantly_api_key") or "").strip())
+
+
+@app.post("/api/connections/test")
+async def api_connection_test(request: Request):
+    return test_connection(str((await request.json()).get("service") or ""))
+
+
+@app.post("/api/campaigns/preview")
+async def api_campaign_preview(request: Request):
+    return campaign_preview(await request.json())
+
+
+@app.get("/api/campaigns/readiness")
+def api_campaign_readiness(id: str):
+    return campaign_readiness(id)
+
+
+@app.post("/api/campaigns/reorder")
+async def api_campaign_reorder(request: Request):
+    return reorder_campaigns([str(i) for i in ((await request.json()).get("ids") or [])])
 
 
 # ── import: a CSV becomes a tab a lane can read (V4 F) ───────────────

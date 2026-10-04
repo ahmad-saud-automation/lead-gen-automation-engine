@@ -53,6 +53,7 @@ REM --- V4: import, per-campaign schedules, login ---
 call :run eval_imports
 call :run eval_lane_schedules
 call :run eval_auth
+call :run eval_connections
 
 echo.
 if %FAILED%==0 (

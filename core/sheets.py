@@ -147,6 +147,14 @@ class SheetsClient:
             rows.append({header[i]: padded[i] for i in range(len(header))})
         return rows
 
+    def info(self, doc_id: str) -> dict:
+        """The spreadsheet's title and its tab names — one metadata read, no cell data."""
+        res = self._svc.spreadsheets().get(
+            spreadsheetId=doc_id, fields="properties.title,sheets.properties.title").execute()
+        return {"title": (res.get("properties") or {}).get("title", ""),
+                "tabs": [s["properties"]["title"] for s in res.get("sheets", [])
+                         if (s.get("properties") or {}).get("title")]}
+
     def _header(self, doc_id: str, tab: str) -> list[str]:
         res = self._svc.spreadsheets().values().get(spreadsheetId=doc_id, range=f"{tab}!1:1").execute()
         return [str(h).strip() for h in (res.get("values") or [[]])[0]]
