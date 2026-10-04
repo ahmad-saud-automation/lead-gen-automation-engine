@@ -34,5 +34,5 @@ export async function middleware(req: NextRequest) {
 export const config = {
   // every page and /legacy; never /api (the engine answers for itself), Next's own files or
   // the login page
-  matcher: ["/((?!api|_next/|login|favicon|style\\.css|app\\.js).*)"],
+  matcher: ["/((?!api|_next/|login|favicon|icon\\.svg|style\\.css|app\\.js).*)"],
 };

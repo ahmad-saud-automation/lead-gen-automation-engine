@@ -1140,6 +1140,13 @@ def start_push(run_id: str = "", *, test_mode: bool = True, confirm: bool = Fals
                              "in config/campaigns.json. Restore it before pushing."}
         fm = loaded["fieldmaps"].get(camp.fieldmap or "")
 
+    # A free test's addresses are INVENTED from name patterns and "verified" by a stub that
+    # never contacts a mail server (core/verify.py test_transport says "ok" to first.last@).
+    # They pass the send gate on paper, so a live push of a test run would mail made-up
+    # addresses and bounce. Only a dry run of them is allowed. (found 2026-10-05)
+    if snap.get("test_mode") and not test_mode:
+        return {"error": "This was a free test: its addresses were made up and never checked, so they "
+                         "cannot be sent. Run the campaign live, then send from that run."}
     found = [r for r in snap.get("results", []) if r.get("found_email")]
     if not found:
         return {"error": "That run has no verified emails to push."}
@@ -1976,6 +1983,7 @@ def api_push_preview(run_id: str = ""):
         str(cfg.get("instantly_campaign_id", "")).strip()
     return {
         "run_id": snap.get("run_id"), "ready": len(rows),
+        "from_test": bool(snap.get("test_mode")),          # a free test's leads: dry run only
         "found": len(found), "held_not_send_ready": len(found) - send_ready,
         "waiting_icebreaker": len(waiting), "icebreaker_note": ib_note,
         "waiting_companies": [r.get("company", "") for r in waiting[:25]],

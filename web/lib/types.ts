@@ -316,6 +316,9 @@ export type LogView = {
 export type PushPreview = {
   status?: string;
   ready: number;
+  /** the run was a free test: its addresses were made up, so only a dry run is allowed */
+  from_test?: boolean;
+  found?: number;
   held_not_send_ready?: number;
   /** Lanes only: send-ready leads whose sheet row has no Icebreaker Studio line yet. */
   waiting_icebreaker?: number;

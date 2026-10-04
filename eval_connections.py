@@ -185,7 +185,22 @@ def check_display_reads_share_one_sheet_read():
         S._TAB_CACHE.clear()
 
 
+def check_a_free_tests_leads_can_never_be_sent_live():
+    from webapp import server as S
+    rid = "zz-test-run-guard"
+    S.JOBS[rid] = {"run_id": rid, "status": "finished", "test_mode": True, "kind": "run", "started": "2026-10-05 00:00:00",
+                   "stage": "done", "finished": "2026-10-05 00:00:01", "cancel": False,
+                   "counters": S._new_counters(), "rates": {}, "events": [], "_seq": 0, "total": 1, "processed": 1,
+                   "results": [{"company": "Smith & Co", "found_email": "ian.smith@smithco.co.uk", "verification": "ok", "status": "email_found"}]}
+    try:
+        r = S.start_push(rid, test_mode=False, confirm=True)
+        assert "free test" in (r.get("error") or ""), r
+    finally:
+        S.JOBS.pop(rid, None)
+
+
 CHECKS = [check_millionverifier_reads_credits_and_explains_a_bad_key,
+          check_a_free_tests_leads_can_never_be_sent_live,
           check_display_reads_share_one_sheet_read,
           check_schedule_preview_uses_the_clocks_maths,
           check_instantly_options_pages_and_names_the_status,
