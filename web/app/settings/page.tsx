@@ -1,8 +1,7 @@
-import { SettingsForm } from "@/components/settings-form";
+import { SettingsPage } from "@/components/settings/page";
 
 export const metadata = { title: "Settings · Lead Gen Engine" };
 
-// The form draws its own top bar: the Save button lives there, always in reach.
-export default function SettingsPage() {
-  return <SettingsForm />;
+export default function SettingsRoute() {
+  return <SettingsPage />;
 }
