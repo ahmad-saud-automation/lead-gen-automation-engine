@@ -100,7 +100,7 @@ export function PlanPreview() {
   };
 
   const lanes = rep?.campaigns ?? [];
-  const snapshots = Object.entries(rep?.sources ?? {}).filter(([, s]) => !s.live);
+  const snapshots = Object.entries(rep?.sources ?? {}).filter(([, s]) => !s.live && s.kind !== "import");
   const found = rep ? findings(rep) : [];
 
   return (

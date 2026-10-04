@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { NextRun } from "@/components/campaign-list";
 import { Card, Chip, Dot, ErrorBox, Loading, StatTable, Tile, type Col } from "@/components/ui";
 import { getJson } from "@/lib/client-api";
 import { money, num } from "@/lib/format";
@@ -187,6 +188,7 @@ export function Dashboard() {
                 ? <a className="btn-link" href={`/runs?run=${lastRun[c.id].run_id}`}>{lastRun[c.id].when.slice(0, 16)}</a>
                 : <span className="faint">never</span>),
             },
+            { key: "next", head: "Next run", align: "l", render: (c) => <NextRun s={c.schedule} id={c.id} /> },
           ]}
         />
       </Card>

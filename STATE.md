@@ -1,10 +1,26 @@
 # STATE — Lead Gen Automation Engine
 
-Handoff so a new session does not re-explore. **Last updated 2026-09-29.**
+Handoff so a new session does not re-explore. **Last updated 2026-10-04.**
 
 ---
 
-## ▶ IN PROGRESS — V4: everything V1 had, on the V3 screens (planned 2026-09-29)
+## ▶ NEXT — choose the server, then deploy (docs/DEPLOY.md)
+
+V4 is **finished and merged into `main`** (A–I, below). What is left is outside the code:
+
+| # | Do this | Who |
+|---|---|---|
+| 1 | Pick the server. Recommended: a small Linux VPS (1 GB RAM is enough). User said "not decided yet" on 2026-10-04 | user |
+| 2 | Follow `docs/DEPLOY.md`. **`start-app.sh` has never been run on Linux** — expect one small fix on the first start | us, with the user |
+| 3 | Copy `data/config.json`, `data/ledger.db` and the Google service-account file to the server by hand (gitignored, never committed); fix `sheet_service_account_file` to the server path | user |
+| 4 | The "⛔ Before the first real run" list further down still applies (Instantly ids, one lane pair at a time) | user |
+
+Not built, on purpose: Docker image, more than one user, automated `data/` backups on the server.
+Known, harmless: no `favicon.ico` (one 404 in the console on every page).
+
+---
+
+## ✅ V4 — everything V1 had, on the V3 screens (2026-09-29 → 2026-10-04)
 
 Review found V3 = V2 parity, but **V2 only ever had 5 of V1's 10 tabs**, and no version could
 create a campaign. The user chose: build all of it, per-campaign schedules, CSV import "for
@@ -17,70 +33,30 @@ maximum functionality and ease" (design left to us), dark mode last using V2's c
 | C | Results (on each run's page, expandable rows) + Log `/log` (filter, search, run picker, CSV) | no | ✅ |
 | D | Settings: all 14 missing keys + suppression lists + local-files editor + "V1 screens only" card | no | ✅ round trip identical (39 settings) |
 | E | **Ice breakers = Icebreaker Studio's line only** (user's choice). Lanes read the sheet's mapped `Ice Breaker` column (`runner.sheet_icebreaker`) and never generate; the push RE-READS the live tab (`_lane_icebreakers` → `runner.refresh_icebreakers`) because Studio may write after the run; leads with no line are held (`hold_without_icebreaker`, default on, in Settings); write-back never writes `Ice Breaker` for lanes (`build_writeback_row(write_icebreaker=False)`). V1 `/legacy` flow unchanged. No template editor | yes | ✅ 2 new checks in `eval_runner`, 1 in `eval_sheets`; verified live: run `df18c6944e49` → 2 waiting, 0 ready, dry run refused with the reason |
-| F | Import — design below | yes | ⏳ next session |
-| G | Per-campaign schedules — design below. **User chose BOTH (in-app + Windows)** because the app will be uploaded to a server, where Windows Task Scheduler may not exist | yes | ⏳ next session |
-| I | **Server deployment** — design below. Not started; ask the user which server first | yes | ⏳ after F + G |
+| F | **Import** `/import`: drop a CSV → it becomes tab `import:<slug>` (file in `data/imports/`, registry `data/imports/index.json`, NOT `local_tabs` — Settings saves `local_tabs` whole and would drop them). A missing Status column is added empty. Preview any upload or sheet tab by name: rows, repeats, suppressed, done before (ledger), no company, ice breakers. "Create a campaign for it" opens New campaign pre-filled (own map file `fieldmap.<slug>.json`). **Write-back is skipped for any non-live tab** (upload or `local_tabs` snapshot), run AND push, and the feed says so. Field map page now has a tab picker (`?tab=`). Removing an upload is refused while a lane reads it | `core/imports.py`, `/api/imports*`, `eval_imports.py` (6) | ✅ driven in Chrome on `samples/companies_house_sample.csv`: 7 rows, 1 repeat found, lane created, test run fired |
+| G | **Per-campaign schedules**: Schedule tab in the campaign editor (own Save — the main Save no longer sends `schedule`, or it would overwrite it). `via: app` = one clock thread in the engine (FastAPI `lifespan`; Starlette 1.x has no `on_event`), ticks 30 s, slot written to `data/schedule_state.json` BEFORE firing → no double fire; a slot >5 min old is skipped + logged in `data/schedule.log`, never replayed. `via: windows` = task `LeadGen-<id>` → `data/tasks/LeadGen-<id>.bat` → `scheduled_run.py --campaign <id> [--test]`; saving one trigger removes the other; deleting a lane removes its task. Windows refuses minute/hourly-on-days (schtasks cannot). Guards added: a lane already running is refused (manual too); live scheduled runs stop at `daily_spend_cap_usd` (it was never enforced before). "Next run" column on Campaigns + Dashboard. `LEADGEN_NO_SCHEDULER=1` turns the clock off | `core/schedules.py`, `/api/campaigns/schedule`, `eval_lane_schedules.py` (11, schtasks faked) | ✅ live: test lane fired 17:32 and 17:33, once each. **The real Windows task path was NOT created on this PC** (only the faked test) |
+| I | **Login + server readiness**: one password (pbkdf2, `data/auth.json` — never `config.json`, which `/api/config` sends to the browser). Engine middleware refuses every request without the session cookie once a password is set or `LEADGEN_REQUIRE_LOGIN=1`; Next `middleware.ts` sends pages to `/login`. Settings → Login card (set / change / remove); `set_password.py` for a server; sign-out in the sidebar; wrong-password throttle per address. `start-app.sh` (requires login by default), `deploy/leadgen.service`, `deploy/Caddyfile`, `docs/DEPLOY.md` | `core/auth.py`, `/api/auth/*`, `eval_auth.py` (5) | ✅ 13 HTTP checks + Chrome drive (wrong pw refused, sign in, sign out, /legacy locked); test password removed afterwards — **the app on this PC is open again, as before** |
 
-### F — Import (user: "maximum functionality and ease"; wants both CSV upload and sheet tab)
-- Engine: `POST /api/imports/upload` (multipart CSV) → saved to `data/imports/<slug>.csv` (gitignored)
-  and registered in `local_tabs` as tab `import:<slug>`; returns headers, row count, first 10
-  rows and organise stats (duplicates, suppressed, already in the ledger). `GET /api/imports`,
-  `POST /api/imports/delete` (unregisters; keeps the file unless asked).
-- Sheet tab: preview any tab by name with the same stats (lanes already read tabs directly).
-- **Write-back off for file sources**: `_worker` / `_push_worker` skip `_open_sheet_writer` when
-  `tab_source(cfg, tab)["kind"] == "local_csv"`, and say so in the feed.
-- A CSV without an `Ice Breaker` column means every lead is held (E) — the Import page must say
-  so and offer the Settings switch.
-- Field map page: a tab picker (`fieldmap_detail(tab)` already takes one) so an import's
-  columns can be mapped.
-- UI: `/import` in the Pipeline group (icon `upload` is already in `icons.tsx`): drop zone,
-  list of imports (rows, date, which lanes read it), preview + stats, "Create a lane for it"
-  (opens `NewCampaign` with the tab preset).
+Bug found on the way and fixed: **a test-mode run showed fake spend** (`$0.0142`) — its simulated
+MillionVerifier checks were priced. No money was spent (test mode uses a stub transport); now a
+test run reports $0 in `_credit_breakdown_from_job` and `get_run`.
 
-### G — Per-campaign schedules (in-app AND Windows Task Scheduler — user chose both)
-- `Campaign.schedule` already exists in `core/campaigns.py`, unused. Shape:
-  `{enabled, via: app|windows, kind: minute|hourly|daily|weekly, every, start, end, days[], test_mode}`.
-- **One lane = one trigger.** `via` picks which one fires it, so a lane never runs twice.
-  Default `app` (works on any server, Linux included); `windows` is offered only when the engine
-  runs on Windows (`os.name == "nt"`), otherwise the option is disabled with the reason.
-- **In-app**: one daemon thread started on FastAPI startup, ticks every 30 s, computes each
-  lane's next due time from the shape above, and fires `start_campaign_run` (+ push if
-  `auto_push`). Last fire per lane kept in `data/schedule_state.json` so a restart neither
-  double-fires nor replays missed runs (missed = skipped, logged). Runs only while the engine
-  runs — on a server that is always.
-- **Windows**: reuse V1's tested `_schedule_args` / `schtasks` code (see `eval_schedule.py`);
-  one task per lane named `LeadGen-<id>`; `scheduled_run.py --campaign <id>` →
-  `start_campaign_run` + `wait_for_job`, then push only if the lane has `auto_push`.
-- Endpoints: `GET/POST /api/campaigns/schedule` (save the schedule; for `windows` also
-  create/update/remove the task). Switching `via` removes the other trigger. Removing a lane
-  removes its task.
-- Guards already exist: daily send/spend caps; a lane already running is refused.
-- UI: a Schedule tab in the campaign editor ("Runs in the app" / "Runs from Windows" choice);
-  "Next run" column on Campaigns and on the Dashboard.
-- Tests: next-due maths (every kind, days, start/end window), no double fire across a restart,
-  `via` switch removes the other trigger (schtasks faked, as in `eval_schedule.py`).
+Trap found on the way: Next middleware builds `req.nextUrl` from its own bind address, so a
+redirect from it sent a browser behind a proxy to `https://localhost:3200/login`. The redirect
+is now built from the request's `Host` / `x-forwarded-*` headers (checked with a fake
+`Host: leads.example.com`). Next refuses a relative `Location`.
 
-### I — Server deployment (user: "I will upload this app to a server")
-Must be solved before it goes on a server — today the app assumes it is on your own PC:
-- **No login.** Anyone who can reach the URL could start runs (spends credits), push leads to
-  Instantly, read API keys' last 4 chars, clear the ledger. Needs a login (single password
-  set in `data/config.json`, session cookie checked in Next middleware + the engine) or,
-  at minimum, a reverse proxy with basic auth.
-- Engine binds `127.0.0.1:8771` and is reached only through Next's rewrites — keep that; expose
-  only the web app, behind HTTPS (Caddy or nginx).
-- `start-app.bat` is Windows-only: add `start-app.sh` + a `systemd` unit (or a Dockerfile) for
-  Linux.
-- Secrets: `data/config.json` and the Google service-account file are gitignored — they must be
-  copied to the server by hand, never committed.
-- **Ask the user first:** which server (Linux VPS? Windows VPS? which provider?) and whether
-  others will use it.
-| H | Dark mode: V2's dark palette mapped onto the theme tokens in `leadgen.css` (`:root[data-theme="dark"]`), toggle at the foot of the sidebar + in the phone menu, saved as `leadgen:theme`, applied before paint by `app/layout.tsx` | no | ✅ |
+Verifying screens: the browser pane is often hidden, so this session drove them with Playwright
+from `docpipeline-venv` using the INSTALLED Chrome (`launch(channel="chrome")`) — this profile has
+no Playwright browser download. Scripts were in the session scratchpad, not the repo.
 
-Work is on branch **`v4`**: A–E + H committed (`44e8ea7`, `767e9c0`), main merged in (`1496c0a`).
-**v4 goes into `main` only when F and G are done and tested** (user left it to us), then push.
-`main` = `4b21dd1`, pushed to origin 2026-09-29 (V3 + Google libs in `requirements.txt`; engine
-venv is `C:\ClaudeDeps\leadgen-venv`, shared Python 3.14, used by `start-app.bat` and
-`.claude/launch.json`).
+H (dark mode) was done 2026-09-29: V2's dark palette on the theme tokens in `leadgen.css`
+(`:root[data-theme="dark"]`), toggle at the foot of the sidebar + in the phone menu, saved as
+`leadgen:theme`, applied before paint by `app/layout.tsx`.
+
+Tests: **196 checks across 23 files**, all passing, all offline (2026-10-04).
+Branch `v4` was merged into `main` on 2026-10-04 and pushed. Engine venv is
+`C:\ClaudeDeps\leadgen-venv` (shared Python 3.14), used by `start-app.bat` and `.claude/launch.json`.
 Verifying in the hidden browser pane: CSS transitions never finish there (no frames), so a
 computed colour right after a change can be stale — read it with `transition: none`.
 
@@ -148,12 +124,7 @@ Theme traps found (both fixed in `leadgen.css`, not `globals.css`):
 - `.form-grid label > span` styles EVERY direct span as a caption — wrap controls in `span.inline`.
 - `td.clip` is `width:100%`, built for ONE clipped column — use `td.cell-clip` for several.
 
-Not carried over: V2's dark-mode toggle. The shared theme is light only, deliberately (see the
-header of `globals.css`).
-
-⚠️ **This profile (`ahmad saud`) has no `C:\ClaudeDeps\leadgen-venv`**, and `requirements.txt`
-lacks the Google libraries, so `docpipeline-venv` starts the engine but cannot read the sheet.
-`.claude/launch.json` borrows `ytdash-venv` (has fastapi + google libs) for previews only.
+Dark mode was left out of V3 at first and added back in V4 (H).
 
 ---
 
@@ -164,7 +135,7 @@ lacks the Google libraries, so `docpipeline-venv` starts the engine but cannot r
 | | |
 |---|---|
 | V1 backup | `_archive\lead gen automation engine - V1 BACKUP 2026-09-04` — 174 files, 6,003,146 bytes, byte-verified. **The engine is NOT a git repo, so this folder is the only fallback.** |
-| Tests | **166 checks across 19 files**, all passing, all offline (re-run 2026-09-29) |
+| Tests | **196 checks across 23 files**, all passing, all offline (re-run 2026-10-04) |
 | Requirements + research | `docs/V2-REQUIREMENTS.md` |
 | Interface | **V3: Next.js in `web/`** (see top). V2's React + Vite `ui/` is archived. The V1 interface is untouched and still served at **`/legacy`** |
 
@@ -321,10 +292,11 @@ Instantly tabs) and its agent view. Dark mode included.
 `data/config.json` can carry `"local_tabs": {"Practices": "C:\\...\\Practices.csv"}` to read
 a tab from a local snapshot instead of the live sheet, so a campaign can be tested with no
 credentials. **Every screen shows an orange banner while it is on.** It is empty by default;
-clear it to go back to the live sheet.
+clear it to go back to the live sheet. Since V4 a `local_tabs` snapshot is also **never written
+back** (run and push), same as an uploaded CSV.
 
-## Next: Phase 3 (not started)
+## Ideas not built (from the old Phase 3 list)
 
-Per-campaign schedules, `auto_push` per lane wired to the scheduler, a Slack or email
+Per-campaign schedules and `auto_push` wired to them are DONE (V4 G). Still open: a Slack or email
 digest, and the "leads found but not yet sent" queue surfaced in the UI
 (`ledger.pending_push()` already answers it).

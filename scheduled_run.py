@@ -9,6 +9,9 @@ does NOT need to be running.
     python scheduled_run.py --test           # no-spend dry run
     python scheduled_run.py --from-sheet     # pull leads from the configured Sheet first
     python scheduled_run.py --push           # also push verified leads to Instantly
+    python scheduled_run.py --campaign <id> [--test]
+                                             # one campaign lane (V4): its next batch, then
+                                             # the push only if the lane has auto_push on
 """
 from __future__ import annotations
 
@@ -22,8 +25,32 @@ if str(ROOT) not in sys.path:
 from webapp import server as S  # noqa: E402
 
 
+def run_campaign(cid: str, test_mode: bool) -> int:
+    """What a lane's Windows task (LeadGen-<id>) runs. Same guards as the app's own clock."""
+    camp = next((c for c in S.runner_mod.load_config_dir(S.CONFIG_DIR)["campaigns"] if c.id == cid), None)
+    if camp is None:
+        print(f"campaign {cid}: not in config/campaigns.json - remove its task")
+        return 1
+    snap = S.fire_lane(camp, test_mode=test_mode, wait=True, source="windows")
+    if snap.get("error"):
+        print(f"campaign {cid}: not started - {snap['error']}")
+        S._sched_log(f"{cid}: windows task did not start a run — {snap['error']}")
+        return 1
+    done = S.get_run(snap["run_id"]) or {}
+    c = done.get("counters", {})
+    print(f"campaign {cid} run {snap['run_id']}: {done.get('processed')}/{done.get('total')} leads, "
+          f"found={c.get('found')}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     test_mode = "--test" in argv
+    if "--campaign" in argv:
+        i = argv.index("--campaign")
+        if i + 1 >= len(argv):
+            print("--campaign needs a campaign id")
+            return 2
+        return run_campaign(argv[i + 1], test_mode)
     from_sheet = "--from-sheet" in argv
     do_push = "--push" in argv
 

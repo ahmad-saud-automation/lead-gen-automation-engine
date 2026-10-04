@@ -17,6 +17,19 @@ import type {
  *  live-run button. The engine's own cost counters are what count. */
 const LIVE_COST_PER_LEAD = 2 * 0.00178;
 
+/** When the lane runs by itself next, linked to its Schedule tab. */
+export function NextRun({ s, id }: { s?: CampaignSummary["schedule"]; id: string }) {
+  const href = `/campaigns/${encodeURIComponent(id)}`;
+  if (s?.problems?.length) return <Chip tone="warn">schedule problem</Chip>;
+  if (!s?.active) return <span className="faint">manual</span>;
+  return (
+    <Link className="btn-link" href={href} title={s.summary}>
+      {s.next_run || "—"}
+      <small className="lane-id">{s.via === "windows" ? "Windows" : "app"} · {s.summary}</small>
+    </Link>
+  );
+}
+
 export function CampaignList() {
   const [data, setData] = useState<CampaignsView | null>(null);
   const [error, setError] = useState("");
@@ -171,6 +184,7 @@ export function CampaignList() {
                   <th>Per day</th>
                   <th className="l">Target</th>
                   <th className="l">Last run</th>
+                  <th className="l">Next run</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -241,6 +255,9 @@ export function CampaignList() {
                         ) : (
                           <span className="faint">never</span>
                         )}
+                      </td>
+                      <td className="l">
+                        <NextRun s={c.schedule} id={c.id} />
                       </td>
                       <td>
                         <span className="row-btns">

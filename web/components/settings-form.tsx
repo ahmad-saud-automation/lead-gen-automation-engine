@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { LoginCard } from "@/components/login-card";
 import { Confirm } from "@/components/modal";
 import { TopBar } from "@/components/shell";
 import { Card, Chip, ErrorBox, Field, Loading, StatTable, type Col } from "@/components/ui";
@@ -217,6 +218,8 @@ export function SettingsForm() {
             ever sees a masked value, and a masked value sent back is ignored, never saved.
           </p>
         </Card>
+
+        <LoginCard />
 
         <Card title="Limits and cost">
           <div className="form-grid">

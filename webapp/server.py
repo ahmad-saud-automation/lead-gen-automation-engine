@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 from collections import Counter
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -46,12 +47,16 @@ from core import fieldmap as fieldmap_mod  # noqa: E402
 from core import campaigns as campaigns_mod  # noqa: E402
 from core import runner as runner_mod  # noqa: E402
 from core import rules as rules_mod  # noqa: E402
+from core import imports as imports_mod  # noqa: E402
+from core import schedules as schedules_mod  # noqa: E402
+from core import auth as auth_mod  # noqa: E402
 
 WEBAPP_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "config"
 DATA = ROOT / "data"
 RUNS_DIR = DATA / "runs"
 UPLOADS_DIR = DATA / "uploads"
+IMPORTS_DIR = DATA / "imports"          # CSVs registered as `import:<slug>` tabs (V4 F)
 LEADS_FILE = DATA / "leads.json"
 HISTORY_FILE = DATA / "history.json"
 CONFIG_FILE = DATA / "config.json"
@@ -283,6 +288,10 @@ def _snapshot(job: dict, since: int = 0) -> dict:
 
 
 def _credit_breakdown_from_job(job: dict) -> dict:
+    # a test run's checks are simulated (no API call), so they cost nothing: pricing its
+    # counters showed made-up spend on runs that never left the machine (found 2026-10-04)
+    if job.get("test_mode"):
+        return _credit_breakdown(job["rates"], {})
     return _credit_breakdown(job["rates"], job["counters"]["credits"])
 
 
@@ -410,6 +419,8 @@ def _worker(run_id: str, firms: list[dict], cfg: dict, *, campaign=None, fm=None
     write_row = None
     if test_mode:
         emit("", "sheet", "skip", "test mode - the sheet is never written")
+    elif campaign is not None and not tab_source(cfg, campaign.tab)["live"]:
+        emit("", "sheet", "skip", f"'{campaign.tab}' is a file, not the live sheet - nothing is written back")
     else:
         write_row = _open_sheet_writer(cfg, emit, tab=(campaign.tab if campaign else ""), fm=fm)
     led = ledger_mod.Ledger(LEDGER_FILE) if cfg.get("use_ledger", True) else None
@@ -587,7 +598,12 @@ def tab_source(cfg: dict, tab: str) -> dict:
 
     A local CSV always wins when one is configured. That is deliberate — it lets a
     campaign be tested with no credentials at all — but it reads a SNAPSHOT, not the live
-    sheet, so it must never be silently in effect."""
+    sheet, so it must never be silently in effect.
+
+    An uploaded CSV (`import:<slug>`) has no sheet at all: it is never written back."""
+    if imports_mod.is_import_tab(tab):
+        p = imports_mod.path_for(IMPORTS_DIR, tab)
+        return {"kind": "import", "path": str(p or ""), "live": False}
     local = str((cfg.get("local_tabs") or {}).get(tab) or "").strip()
     if local:
         return {"kind": "local_csv", "path": local, "live": False}
@@ -601,7 +617,12 @@ def _read_tab(cfg: dict, tab: str) -> list[dict]:
     """Raw rows from ONE tab. A service account can address a tab by name; the
     no-credentials CSV export only reaches the tab the URL's gid points at. A local CSV
     configured in `local_tabs` overrides both, for offline testing."""
-    local = str((cfg.get("local_tabs") or {}).get(tab) or "").strip()
+    if imports_mod.is_import_tab(tab):
+        p = imports_mod.path_for(IMPORTS_DIR, tab)
+        if p is None or not p.exists():
+            raise ValueError(f"'{tab}' is not an uploaded file any more — upload it again on Import")
+        return _rows_from_csv_bytes(p.read_bytes())
+    local =str((cfg.get("local_tabs") or {}).get(tab) or "").strip()
     if local:
         p = Path(local)
         if not p.exists():
@@ -620,10 +641,14 @@ def campaigns_view() -> dict:
     """Every campaign, plus any config problem that would stop a run."""
     loaded = runner_mod.load_config_dir(CONFIG_DIR)
     camps = loaded["campaigns"]
+    state = _read_json(SCHEDULE_STATE, {})
     return {
         "globals": loaded["globals"],
         "issues": campaigns_mod.validate(camps),
+        "windows_available": windows_available(),
         "campaigns": [{
+            "schedule": {k: v for k, v in lane_schedule_view(c, state).items() if k != "schedule"}
+            | {"via": schedules_mod.normalize(c.schedule)[0]["via"]},
             "id": c.id, "name": c.name, "enabled": c.enabled, "priority": c.priority,
             "tab": c.tab, "fieldmap": c.fieldmap,
             "per_run": c.per_run, "per_day": c.per_day,
@@ -754,7 +779,15 @@ def delete_campaign(cid: str) -> dict:
     body["campaigns"] = rows
     out = _write_campaigns_raw(body)
     out["campaign"] = cid
+    if out.get("ok"):
+        lane_task_delete(cid)                   # its Windows task would fire a lane that is gone
     return out
+
+
+def import_fieldmap_file(tab: str) -> str:
+    """The field-map file an upload's lanes use: one per upload, named after it, so mapping
+    one CSV's columns never changes another's."""
+    return f"fieldmap.{tab[len(imports_mod.PREFIX):]}.json"
 
 
 def fieldmap_detail(tab: str = "") -> dict:
@@ -766,6 +799,11 @@ def fieldmap_detail(tab: str = "") -> dict:
     cfg = load_config()
     loaded = runner_mod.load_config_dir(CONFIG_DIR)
     lane = next((c for c in loaded["campaigns"] if not tab or c.tab == tab), None)
+    if not lane and imports_mod.is_import_tab(tab):
+        # an upload nobody reads yet: show its columns against an unsaved, auto-matched map,
+        # so it can be checked before a lane is made for it
+        lane = campaigns_mod.Campaign({"id": "", "tab": tab, "fieldmap": import_fieldmap_file(tab)})
+        loaded["fieldmaps"][lane.fieldmap] = fieldmap_mod.load(CONFIG_DIR / lane.fieldmap)
     if not lane:
         return {"error": f"No campaign uses tab '{tab}'."}
     try:
@@ -825,6 +863,9 @@ def start_campaign_run(campaign_id: str, *, test_mode: bool = True) -> dict:
         return {"error": f"No campaign '{campaign_id}' in config/campaigns.json."}
     if not camp.enabled:
         return {"error": f"Campaign '{campaign_id}' is disabled. Enable it in config/campaigns.json."}
+    # a click and a schedule (or two clicks) must not work the same rows twice at once
+    if any(j.get("status") == "running" and j.get("campaign") == camp.id for j in JOBS.values()):
+        return {"error": f"'{camp.name}' is already running. Wait for it to finish, or stop it."}
 
     problems = [i["issue"] for i in campaigns_mod.validate([camp])]
     if problems:
@@ -916,7 +957,12 @@ def _push_worker(push_id: str, rows: list[dict], cfg: dict, *, camp=None, fm=Non
 
     # one live sheet writer, so each pushed lead updates its Status row immediately
     # (same behaviour as n8n's per-item "Update Sheet" node)
-    if not test_mode:
+    if camp is not None and not tab_source(cfg, camp.tab)["live"]:
+        # an uploaded CSV or a local snapshot: there is no sheet row to update
+        writeback = False
+        if not test_mode:
+            emit("", "sheet", "skip", f"'{camp.tab}' is a file, not the live sheet - nothing is written back")
+    elif not test_mode:
         write_row = _open_sheet_writer(cfg, emit, tab=(camp.tab if camp else ""), fm=fm)
     led = ledger_mod.Ledger(LEDGER_FILE) if cfg.get("use_ledger", True) else None
 
@@ -1202,6 +1248,221 @@ def schedule_delete() -> dict:
     return {"ok": r["ok"], "error": "" if r["ok"] else (r["err"] or r["out"])}
 
 
+# ── per-campaign schedules (V4 G): the engine's own clock OR one Windows task per lane ──
+#
+# `schedule.via` picks the ONE trigger that fires a lane, so it never runs twice. The app
+# clock works on any server (Linux included); a Windows task also runs while the app is shut.
+
+SCHEDULE_STATE = DATA / "schedule_state.json"    # last slot fired per lane: no double fire
+SCHEDULE_LOG = DATA / "schedule.log"
+TASKS_DIR = DATA / "tasks"                       # the .bat each Windows task starts
+LANE_TASK_PREFIX = "LeadGen-"
+TICK_SECONDS = 30
+_SCHED_LOCK = threading.Lock()
+
+
+def windows_available() -> bool:
+    return os.name == "nt"
+
+
+def _sched_log(msg: str) -> None:
+    line = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  {msg}\n"
+    try:
+        with SCHEDULE_LOG.open("a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError:
+        pass
+
+
+def _lane_task_name(cid: str) -> str:
+    return LANE_TASK_PREFIX + cid
+
+
+def lane_task_status(cid: str) -> dict:
+    if not windows_available():
+        return {"exists": False}
+    r = _schtasks(["/query", "/tn", _lane_task_name(cid), "/fo", "LIST"])
+    if not r["ok"]:
+        return {"exists": False}
+    info = dict((k.strip(), v.strip()) for k, _s, v in
+                (ln.partition(":") for ln in r["out"].splitlines() if ":" in ln))
+    return {"exists": True, "name": _lane_task_name(cid), "next_run": info.get("Next Run Time", ""),
+            "last_run": info.get("Last Run Time", ""), "status": info.get("Status", "")}
+
+
+def lane_task_create(cid: str, s: dict) -> dict:
+    """One Windows task for one lane. Every value passed to schtasks is validated by
+    _schedule_args; the lane id is validated by campaigns.ID_RE before it gets here."""
+    if not windows_available():
+        return {"ok": False, "error": "Windows Task Scheduler only exists when the engine runs on Windows."}
+    if s["kind"] in ("minute", "hourly") and s["days"]:
+        return {"ok": False, "error": "A Windows task cannot limit an every-N-minutes or every-N-hours "
+                                      "schedule to certain days. Clear the days, or let the app run it."}
+    args, _info, err = _schedule_args(s["kind"], s["every"], s["start"], s["end"], s["days"])
+    if err:
+        return {"ok": False, "error": err}
+    TASKS_DIR.mkdir(parents=True, exist_ok=True)
+    bat = TASKS_DIR / f"{_lane_task_name(cid)}.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        f'cd /d "{ROOT}"\r\n'
+        f'"{sys.executable}" scheduled_run.py --campaign {cid}{" --test" if s["test_mode"] else ""}'
+        f' >> "{DATA / "scheduled.log"}" 2>&1\r\n', encoding="utf-8")
+    r = _schtasks(["/create", "/tn", _lane_task_name(cid), "/tr", f'"{bat}"'] + args + ["/f"])
+    if not r["ok"]:
+        return {"ok": False, "error": r["err"] or r["out"] or "schtasks failed"}
+    return {"ok": True, **lane_task_status(cid)}
+
+
+def lane_task_delete(cid: str) -> None:
+    """Remove a lane's Windows task if it has one. Missing is fine — that is the goal."""
+    if windows_available() and lane_task_status(cid)["exists"]:
+        _schtasks(["/delete", "/tn", _lane_task_name(cid), "/f"])
+    try:
+        (TASKS_DIR / f"{_lane_task_name(cid)}.bat").unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _lane_running(cid: str) -> bool:
+    return any(j.get("status") == "running" and j.get("campaign") == cid for j in JOBS.values())
+
+
+def _live_spend_today() -> float:
+    today = datetime.now().strftime("%Y-%m-%d")
+    return sum(float(h.get("spent_usd") or 0) for h in _read_json(HISTORY_FILE, [])
+               if not h.get("test_mode") and str(h.get("when", "")).startswith(today))
+
+
+def fire_lane(camp, *, test_mode: bool, wait: bool = False, source: str = "app") -> dict:
+    """Start one scheduled run (+ the push when the lane has auto_push). Same guards as a
+    click: the lane is not already running, today's spend cap is not reached."""
+    if not test_mode:
+        cap = float(runner_mod.load_config_dir(CONFIG_DIR)["globals"].get("daily_spend_cap_usd") or 0)
+        spent = _live_spend_today()
+        if cap and spent >= cap:
+            return {"error": f"today's spend cap is reached (${spent:.2f} of ${cap:.2f})"}
+    snap = start_campaign_run(camp.id, test_mode=test_mode)
+    if snap.get("error"):
+        return snap
+    run_id = snap["run_id"]
+    _sched_log(f"{camp.id}: {source} started run {run_id} ({'test' if test_mode else 'live'})")
+    if camp.auto_push:
+        def push_after():
+            wait_for_job(run_id)
+            p = start_push(run_id, test_mode=test_mode, confirm=True)
+            _sched_log(f"{camp.id}: auto-push after {run_id}: "
+                       + (p.get("error") or f"push {p.get('run_id')} started"))
+            if wait and not p.get("error"):
+                wait_for_job(p["run_id"])
+        if wait:
+            push_after()
+        else:
+            threading.Thread(target=push_after, daemon=True).start()
+    elif wait:
+        wait_for_job(run_id)
+    return snap
+
+
+def _parse_ts(v) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(v)) if v else None
+    except ValueError:
+        return None
+
+
+def scheduler_tick(now: datetime | None = None) -> list[dict]:
+    """Fire every app-scheduled lane whose slot has come. Returns what it did (for tests/logs).
+
+    The slot is recorded BEFORE the run starts, so a crash mid-start can never fire it twice."""
+    now = now or datetime.now()
+    did = []
+    with _SCHED_LOCK:
+        state = _read_json(SCHEDULE_STATE, {})
+        for camp in runner_mod.load_config_dir(CONFIG_DIR)["campaigns"]:
+            s, problems = schedules_mod.normalize(camp.schedule)
+            if problems or not (camp.enabled and s["enabled"] and s["via"] == "app"):
+                continue
+            st = state.setdefault(camp.id, {})
+            slot, missed = schedules_mod.due(s, _parse_ts(st.get("last_fire")), now)
+            if missed:
+                _sched_log(f"{camp.id}: skipped {missed} missed run(s) — the engine was not running")
+                st["last_fire"] = (now - schedules_mod.GRACE).isoformat(timespec="seconds")
+            if slot is None:
+                continue
+            st["last_fire"] = slot.isoformat(timespec="seconds")
+            _write_json(SCHEDULE_STATE, state)
+            if _lane_running(camp.id):
+                res = {"error": "it is still running from before"}
+            else:
+                try:
+                    res = fire_lane(camp, test_mode=s["test_mode"])
+                except Exception as e:  # noqa: BLE001 - one lane must not stop the clock
+                    res = {"error": str(e)}
+            st.update({"fired_at": now.isoformat(timespec="seconds"),
+                       "result": res.get("error") or "started", "run_id": res.get("run_id", "")})
+            if res.get("error"):
+                _sched_log(f"{camp.id}: not started — {res['error']}")
+            did.append({"campaign": camp.id, "slot": st["last_fire"], **st})
+        _write_json(SCHEDULE_STATE, state)
+    return did
+
+
+def _scheduler_loop() -> None:
+    _sched_log("app scheduler started")
+    while True:
+        try:
+            scheduler_tick()
+        except Exception as e:  # noqa: BLE001 - the clock keeps ticking
+            _sched_log(f"scheduler error: {e}")
+        time.sleep(TICK_SECONDS)
+
+
+def lane_schedule_view(camp, state: dict | None = None, *, now: datetime | None = None) -> dict:
+    s, problems = schedules_mod.normalize(camp.schedule)
+    now = now or datetime.now()
+    on = bool(camp.enabled and s["enabled"] and not problems)
+    nxt = schedules_mod.next_after(s, now) if on else None
+    st = (state if state is not None else _read_json(SCHEDULE_STATE, {})).get(camp.id, {})
+    return {"schedule": s, "problems": problems, "summary": schedules_mod.summary(s),
+            "active": on, "next_run": nxt.strftime("%Y-%m-%d %H:%M") if nxt else "",
+            "last": st}
+
+
+def save_lane_schedule(cid: str, raw: dict) -> dict:
+    """Validate, set the ONE trigger (create the Windows task, or remove it), then save."""
+    loaded = runner_mod.load_config_dir(CONFIG_DIR)
+    camp = next((c for c in loaded["campaigns"] if c.id == cid), None)
+    if camp is None:
+        return {"ok": False, "problems": [f"no campaign '{cid}'"]}
+    s, problems = schedules_mod.normalize(raw)
+    if s["via"] == "windows" and not windows_available():
+        problems.append("this engine is not running on Windows — use the app trigger")
+    if problems:
+        return {"ok": False, "problems": problems}
+
+    if s["enabled"] and s["via"] == "windows":
+        t = lane_task_create(cid, s)
+        if not t["ok"]:
+            return {"ok": False, "problems": [t["error"]]}
+    else:
+        lane_task_delete(cid)                     # switching to the app removes the other trigger
+
+    out = save_campaign({"id": cid, "schedule": s})
+    if not out.get("ok"):
+        if s["via"] == "windows":
+            lane_task_delete(cid)
+        return {"ok": False, "problems": [i["issue"] for i in out.get("issues", [])]}
+    if s["enabled"] and s["via"] == "app":
+        # start counting from now: a slot from a few minutes ago must not fire on saving
+        with _SCHED_LOCK:
+            state = _read_json(SCHEDULE_STATE, {})
+            state.setdefault(cid, {})["last_fire"] = datetime.now().isoformat(timespec="seconds")
+            _write_json(SCHEDULE_STATE, state)
+    camp.schedule = s
+    return {"ok": True, **lane_schedule_view(camp)}
+
+
 def latest_run(kind: str | None = None) -> dict | None:
     """Newest job. kind="run" skips push jobs, so the Dashboard keeps showing the
     enrichment run (and its credits) after you push."""
@@ -1223,13 +1484,129 @@ def get_run(run_id: str, since: int = 0) -> dict | None:
     if not rec:
         return None
     rec["events"] = _read_events(run_id, since, limit=FEED_WINDOW)
-    rec["credits"] = _credit_breakdown(load_config(), rec.get("counters", {}).get("credits", {}))
+    rec["credits"] = _credit_breakdown(
+        load_config(), {} if rec.get("test_mode") else rec.get("counters", {}).get("credits", {}))
     return rec
 
 
 # ───────────────────────── FastAPI ─────────────────────────
 
-app = FastAPI(title="Lead Gen Automation Engine")
+@asynccontextmanager
+async def _lifespan(_app):
+    # The app clock runs only inside the served engine, never when a script (scheduled_run.py,
+    # plan.py, the evals) imports this module. LEADGEN_NO_SCHEDULER=1 switches it off.
+    if os.environ.get("LEADGEN_NO_SCHEDULER") != "1":
+        threading.Thread(target=_scheduler_loop, name="leadgen-scheduler", daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Lead Gen Automation Engine", lifespan=_lifespan)
+
+
+# ── login (V4 I): one password, only once one is set or the server requires it ──
+
+AUTH_FILE = DATA / "auth.json"
+_AUTH_OPEN = {"/api/auth/status", "/api/auth/login", "/api/auth/logout"}
+_THROTTLE = auth_mod.Throttle()
+
+
+def login_required() -> bool:
+    return auth_mod.is_set(auth_mod.load(AUTH_FILE)) or os.environ.get("LEADGEN_REQUIRE_LOGIN") == "1"
+
+
+def _signed_in(request: Request) -> bool:
+    return auth_mod.valid(auth_mod.load(AUTH_FILE), request.cookies.get(auth_mod.COOKIE))
+
+
+def _client(request: Request) -> str:
+    # behind Next (and a proxy) the socket is always 127.0.0.1; the first forwarded address
+    # is the browser's
+    fwd = request.headers.get("x-forwarded-for", "")
+    return fwd.split(",")[0].strip() or (request.client.host if request.client else "?")
+
+
+def _set_session(resp: Response, request: Request, rec: dict) -> None:
+    # behind Caddy + Next the engine cannot always see the browser's scheme, so a server says
+    # so outright (deploy/leadgen.service); a Secure cookie over plain http would never return
+    https = os.environ.get("LEADGEN_SECURE_COOKIE") == "1" or \
+        request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    resp.set_cookie(auth_mod.COOKIE, auth_mod.issue(rec), max_age=auth_mod.SESSION_SECONDS,
+                    httponly=True, samesite="lax", secure=https, path="/")
+
+
+@app.middleware("http")
+async def _login_gate(request: Request, call_next):
+    path = request.url.path
+    if path in _AUTH_OPEN or not login_required() or _signed_in(request):
+        return await call_next(request)
+    if path.startswith("/api/"):
+        return JSONResponse({"error": "Sign in first.", "login": True}, status_code=401)
+    return HTMLResponse('<body style="font:15px system-ui;margin:12vh auto;max-width:30rem">'
+                        '<p>Sign in first: <a href="/login">/login</a></p></body>', status_code=401)
+
+
+@app.get("/api/auth/status")
+def api_auth_status(request: Request):
+    rec = auth_mod.load(AUTH_FILE)
+    return {"required": login_required(), "password_set": auth_mod.is_set(rec),
+            "signed_in": _signed_in(request), "set_at": rec.get("set_at", ""),
+            "server_requires": os.environ.get("LEADGEN_REQUIRE_LOGIN") == "1"}
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(request: Request):
+    rec = auth_mod.load(AUTH_FILE)
+    if not auth_mod.is_set(rec):
+        return {"ok": False, "error": "No password is set yet. On the server, run: python set_password.py"}
+    who = _client(request)
+    wait = _THROTTLE.blocked(who)
+    if wait:
+        return {"ok": False, "error": f"Too many wrong passwords. Try again in {wait // 60 + 1} min."}
+    if not auth_mod.verify(rec, str((await request.json()).get("password") or "")):
+        _THROTTLE.miss(who)
+        return {"ok": False, "error": "Wrong password."}
+    _THROTTLE.clear(who)
+    resp = JSONResponse({"ok": True})
+    _set_session(resp, request, rec)
+    return resp
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth_mod.COOKIE, path="/")
+    return resp
+
+
+@app.post("/api/auth/password")
+async def api_auth_password(request: Request):
+    """Set or change the password. Changing needs the current one; a new password signs
+    every other browser out, and this one straight back in."""
+    b = await request.json()
+    rec = auth_mod.load(AUTH_FILE)
+    if auth_mod.is_set(rec) and not auth_mod.verify(rec, str(b.get("current") or "")):
+        return {"ok": False, "error": "The current password is wrong."}
+    new = str(b.get("new") or "")
+    why = auth_mod.check_strength(new)
+    if why:
+        return {"ok": False, "error": f"Not saved: {why}."}
+    rec = auth_mod.make(new)
+    auth_mod.save(AUTH_FILE, rec)
+    resp = JSONResponse({"ok": True, "set_at": rec["set_at"]})
+    _set_session(resp, request, rec)
+    return resp
+
+
+@app.post("/api/auth/clear")
+async def api_auth_clear(request: Request):
+    """Remove the password: the app is open again. Refused where the server requires a login."""
+    if os.environ.get("LEADGEN_REQUIRE_LOGIN") == "1":
+        return {"ok": False, "error": "This server requires a login, so the password cannot be removed."}
+    rec = auth_mod.load(AUTH_FILE)
+    if auth_mod.is_set(rec) and not auth_mod.verify(rec, str((await request.json()).get("current") or "")):
+        return {"ok": False, "error": "The current password is wrong."}
+    AUTH_FILE.unlink(missing_ok=True)
+    return {"ok": True}
 
 
 @app.middleware("http")
@@ -1703,6 +2080,99 @@ def api_fieldmap_detail(tab: str = ""):
 async def api_fieldmap_save(request: Request):
     b = await request.json()
     return save_fieldmap(str(b.get("file") or ""), b.get("mapping") or {})
+
+
+@app.get("/api/campaigns/schedule")
+def api_campaign_schedule(id: str):
+    camp = next((c for c in runner_mod.load_config_dir(CONFIG_DIR)["campaigns"] if c.id == id), None)
+    if camp is None:
+        return {"error": f"No campaign '{id}'."}
+    view = lane_schedule_view(camp)
+    view["windows_available"] = windows_available()
+    view["task"] = lane_task_status(id) if view["schedule"]["via"] == "windows" else {"exists": False}
+    return view
+
+
+@app.post("/api/campaigns/schedule")
+async def api_campaign_schedule_save(request: Request):
+    b = await request.json()
+    return save_lane_schedule(str(b.get("id") or ""), b.get("schedule") or {})
+
+
+# ── import: a CSV becomes a tab a lane can read (V4 F) ───────────────
+
+def _lanes_reading(tab: str) -> list[dict]:
+    return [{"id": c.id, "name": c.name, "enabled": c.enabled}
+            for c in runner_mod.load_config_dir(CONFIG_DIR)["campaigns"] if c.tab == tab]
+
+
+def import_preview(tab: str) -> dict:
+    """Any tab — an upload or a sheet tab by name — with its first rows and what a lane would
+    find in it: duplicates, suppressed firms, leads the ledger already handled. Free."""
+    tab = str(tab or "").strip()
+    if not tab:
+        return {"error": "Give a tab name."}
+    cfg = load_config()
+    try:
+        rows = _read_tab(cfg, tab)
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"Could not read '{tab}': {e}"}
+    heads = runner_mod.headers_of(rows)
+    loaded = runner_mod.load_config_dir(CONFIG_DIR)
+    lane = next((c for c in loaded["campaigns"] if c.tab == tab), None)
+    fm = runner_mod.fieldmap_for(lane, loaded["fieldmaps"], heads) if lane else \
+        fieldmap_mod.FieldMap({}).completed(heads)
+    led = ledger_mod.Ledger(LEDGER_FILE) if cfg.get("use_ledger", True) else None
+    st = imports_mod.stats(rows, owned_companies=cfg.get("owned_companies"),
+                           owned_domains=cfg.get("owned_domains"), ledger=led, fm=fm,
+                           retry_not_found=bool(cfg.get("retry_not_found", False)))
+    meta = imports_mod.load_index(IMPORTS_DIR).get(tab[len(imports_mod.PREFIX):]) \
+        if imports_mod.is_import_tab(tab) else None
+    return {"tab": tab, "source": tab_source(cfg, tab), "import": meta, "headers": heads,
+            "sample": rows[:10], "stats": st, "check": runner_mod.check_fieldmap(fm, heads),
+            "lanes": _lanes_reading(tab),
+            "hold_without_icebreaker": bool(cfg.get("hold_without_icebreaker", True))}
+
+
+@app.get("/api/imports")
+def api_imports():
+    lanes = runner_mod.load_config_dir(CONFIG_DIR)["campaigns"]
+    out = []
+    for rec in sorted(imports_mod.load_index(IMPORTS_DIR).values(),
+                      key=lambda r: r.get("uploaded", ""), reverse=True):
+        out.append({**rec, "fieldmap": import_fieldmap_file(rec["tab"]), "lanes": [{"id": c.id, "name": c.name, "enabled": c.enabled}
+                                     for c in lanes if c.tab == rec["tab"]]})
+    sheet_tabs = sorted({c.tab for c in lanes if c.tab and not imports_mod.is_import_tab(c.tab)})
+    return {"imports": out, "sheet_tabs": sheet_tabs}
+
+
+@app.post("/api/imports/upload")
+async def api_imports_upload(file: UploadFile = File(...)):
+    raw = await file.read()
+    try:
+        rec = imports_mod.save_upload(IMPORTS_DIR, file.filename or "upload.csv", raw)
+    except ValueError as e:
+        return {"error": str(e)}
+    return {"ok": True, "import": rec}
+
+
+@app.get("/api/imports/preview")
+def api_imports_preview(tab: str = ""):
+    return import_preview(tab)
+
+
+@app.post("/api/imports/delete")
+async def api_imports_delete(request: Request):
+    b = await request.json()
+    slug = str(b.get("slug") or "").strip()
+    users = _lanes_reading(imports_mod.PREFIX + slug)
+    if users:
+        return {"ok": False, "error": "Campaigns still read this file: "
+                + ", ".join(u["name"] for u in users) + ". Delete them or point them at another tab first."}
+    rec = imports_mod.remove(IMPORTS_DIR, slug, delete_file=bool(b.get("delete_file", False)))
+    if rec is None:
+        return {"ok": False, "error": f"No import '{slug}'."}
+    return {"ok": True, "removed": rec["name"]}
 
 
 @app.post("/api/campaign/run")

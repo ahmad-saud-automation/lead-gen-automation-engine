@@ -49,6 +49,10 @@ call :run eval_campaigns
 call :run eval_campaign_admin
 call :run eval_labels
 call :run eval_runner
+REM --- V4: import, per-campaign schedules, login ---
+call :run eval_imports
+call :run eval_lane_schedules
+call :run eval_auth
 
 echo.
 if %FAILED%==0 (

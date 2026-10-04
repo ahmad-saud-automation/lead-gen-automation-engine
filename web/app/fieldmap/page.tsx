@@ -3,12 +3,15 @@ import { TopBar } from "@/components/shell";
 
 export const metadata = { title: "Field map · Lead Gen Engine" };
 
-export default function FieldMapPage() {
+// ?tab=<tab> opens that tab's map (a sheet tab, or an upload: import:<name>); without it, the
+// first campaign's tab.
+export default async function FieldMapPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  const { tab } = await searchParams;
   return (
     <>
       <TopBar title="Field map" sub="Engine field → your column" />
       <div className="page">
-        <FieldmapEditor />
+        <FieldmapEditor tab={tab} />
       </div>
     </>
   );

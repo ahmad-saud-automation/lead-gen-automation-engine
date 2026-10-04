@@ -5,8 +5,8 @@ import { useEffect, useState } from "react";
 import { Card, Checks, Chip, ErrorBox, Loading, SnapshotNote, Tile } from "@/components/ui";
 import { getJson, postJson } from "@/lib/client-api";
 import { num } from "@/lib/format";
-import { reloadWithNote } from "@/lib/nav";
-import type { FieldmapDetail, FieldmapField, FieldmapSaved } from "@/lib/types";
+import { goWithParams, reloadWithNote } from "@/lib/nav";
+import type { CampaignsView, FieldmapDetail, FieldmapField, FieldmapSaved, ImportsView } from "@/lib/types";
 
 type Mapping = Record<string, string>;
 
@@ -27,25 +27,43 @@ function Fill({ field, fill }: { field: FieldmapField; fill: number | undefined 
   return <span className={fill === 0 ? "neg" : fill < 30 ? "warn-ink" : undefined}>{fill}%</span>;
 }
 
-export function FieldmapEditor() {
+export function FieldmapEditor({ tab }: { tab?: string }) {
   const [d, setD] = useState<FieldmapDetail | null>(null);
   const [error, setError] = useState("");
   const [map, setMap] = useState<Mapping>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [showPreview, setShowPreview] = useState(false);
+  const [tabs, setTabs] = useState<string[]>([]);
 
   useEffect(() => {
-    getJson<FieldmapDetail>("/fieldmap/detail")
+    getJson<FieldmapDetail>("/fieldmap/detail", tab ? { tab } : undefined)
       .then((r) => {
         if (r.error) throw new Error(r.error);
         setD(r);
         setMap(Object.fromEntries(r.fields.filter((f) => f.mapped).map((f) => [f.field, f.mapped])));
       })
       .catch((e: Error) => setError(e.message));
-  }, []);
+    // every tab a map can be opened for: the campaigns' tabs, then uploads nobody reads yet
+    Promise.all([getJson<CampaignsView>("/campaigns"), getJson<ImportsView>("/imports")])
+      .then(([c, i]) => setTabs([...new Set([...c.campaigns.map((l) => l.tab), ...i.imports.map((x) => x.tab)].filter(Boolean))]))
+      .catch(() => {});
+  }, [tab]);
 
-  if (error) return <ErrorBox title="The field map could not be loaded" detail={error} />;
+  const picker = tabs.length > 1 ? (
+    <div className="toolbar">
+      <span className="muted">Tab</span>
+      <select
+        aria-label="Tab to map"
+        value={d?.tab ?? tab ?? ""}
+        onChange={(e) => goWithParams("/fieldmap", { tab: e.target.value })}
+      >
+        {tabs.map((t) => <option key={t} value={t}>{t}</option>)}
+      </select>
+    </div>
+  ) : null;
+
+  if (error) return <>{picker}<ErrorBox title="The field map could not be loaded" detail={error} /></>;
   if (!d) {
     return (
       <Card>
@@ -88,6 +106,7 @@ export function FieldmapEditor() {
 
   return (
     <div className="stack">
+      {picker}
       <div className="band cols-4 stats">
         <Tile label="Tab" title="Sheet tab" value={d.tab} foot={<><b>{num(d.rows)}</b> rows</>} />
         <Tile label="Columns" title="Columns in the sheet" value={d.headers.length} />
@@ -100,7 +119,7 @@ export function FieldmapEditor() {
         />
       </div>
 
-      {d.source && !d.source.live ? <SnapshotNote tab={d.tab} path={d.source.path} /> : null}
+      {d.source && !d.source.live && d.source.kind !== "import" ? <SnapshotNote tab={d.tab} path={d.source.path} /> : null}
 
       <Card title="Check" label={d.file}>
         <Checks

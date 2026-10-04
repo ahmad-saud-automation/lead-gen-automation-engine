@@ -20,6 +20,11 @@ async function read<T>(res: Response): Promise<T> {
   } catch {
     body = { error: text.slice(0, 300) };
   }
+  if (res.status === 401 && body.login && typeof window !== "undefined") {
+    // signed out (expired, or the password was changed elsewhere): back to the login page
+    const here = window.location.pathname + window.location.search;
+    window.location.assign(`/login?next=${encodeURIComponent(here)}`);
+  }
   if (!res.ok) {
     const why = body.error || body.detail || `${res.status} ${res.statusText}`;
     throw new Error(typeof why === "string" ? why : JSON.stringify(why));

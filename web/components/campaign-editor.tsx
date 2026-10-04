@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { Confirm } from "@/components/modal";
 import { NewCampaign } from "@/components/new-campaign";
+import { ScheduleEditor } from "@/components/schedule-editor";
 import { TopBar } from "@/components/shell";
 import { Card, Chip, ErrorBox, Field, Loading, Seg } from "@/components/ui";
 import { getJson, postJson } from "@/lib/client-api";
@@ -13,7 +14,7 @@ import type {
   LabelSpec, RuleBlock, SortKey,
 } from "@/lib/types";
 
-type Tab = "setup" | "rules" | "order" | "labels" | "instantly";
+type Tab = "setup" | "rules" | "order" | "labels" | "instantly" | "schedule";
 
 /* A rule's value is typed by its operator. `between` needs exactly two numbers, the list
  * operators need a list, everything else is a scalar. Doing this here means the JSON on disk is
@@ -117,11 +118,13 @@ function RemoveButton({ label, onClick }: { label: string; onClick: () => void }
   );
 }
 
-export function CampaignEditor({ id }: { id: string }) {
+const TABS: Tab[] = ["setup", "rules", "order", "labels", "instantly", "schedule"];
+
+export function CampaignEditor({ id, initialTab }: { id: string; initialTab?: string }) {
   const [meta, setMeta] = useState<CampaignDetail | null>(null);
   const [c, setC] = useState<CampaignRaw | null>(null);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<Tab>("setup");
+  const [tab, setTab] = useState<Tab>(TABS.includes(initialTab as Tab) ? (initialTab as Tab) : "setup");
   const [saving, setSaving] = useState(false);
   const [issues, setIssues] = useState<ConfigIssue[]>([]);
   const [lanes, setLanes] = useState<CampaignSummary[]>([]);
@@ -186,7 +189,10 @@ export function CampaignEditor({ id }: { id: string }) {
     setSaving(true);
     setIssues([]);
     try {
-      const r = await postJson<CampaignsSaved>("/campaigns/save", c);
+      // the schedule is saved by its own tab (it may create a Windows task); sending the copy
+      // loaded with this page would overwrite a schedule saved since
+      const { schedule: _schedule, ...rest } = c;
+      const r = await postJson<CampaignsSaved>("/campaigns/save", rest);
       if (!r.ok) {
         setIssues(r.issues ?? [{ campaign: c.id, issue: "The engine did not save it." }]);
         setSaving(false);
@@ -259,8 +265,13 @@ export function CampaignEditor({ id }: { id: string }) {
             { value: "order", label: `Order · ${order.length}` },
             { value: "labels", label: `Labels · ${labels.length}` },
             { value: "instantly", label: "Instantly" },
+            { value: "schedule", label: "Schedule" },
           ]}
         />
+
+        {tab === "schedule" ? (
+          <ScheduleEditor id={c.id} enabled={Boolean(c.enabled)} autoPush={Boolean(c.auto_push)} />
+        ) : null}
 
         {tab === "setup" ? (
           <>

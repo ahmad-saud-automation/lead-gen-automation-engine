@@ -16,18 +16,21 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
 export function NewCampaign({
   lanes,
   copyFrom,
+  preset,
   onClose,
 }: {
   lanes: CampaignSummary[];
   /** Open as "Duplicate": the lane to copy, preselected. */
   copyFrom?: CampaignSummary;
+  /** Open from the Import page: the uploaded file's tab and its own field map, filled in. */
+  preset?: { tab: string; fieldmap: string; name: string };
   onClose: () => void;
 }) {
-  const tabs = [...new Set(lanes.map((l) => l.tab).filter(Boolean))];
-  const maps = [...new Set(lanes.map((l) => l.fieldmap).filter(Boolean))];
+  const tabs = [...new Set([preset?.tab ?? "", ...lanes.map((l) => l.tab)].filter(Boolean))];
+  const maps = [...new Set([preset?.fieldmap ?? "", ...lanes.map((l) => l.fieldmap)].filter(Boolean))];
   const [source, setSource] = useState(copyFrom?.id ?? "");
   const src = lanes.find((l) => l.id === source);
-  const [name, setName] = useState(copyFrom ? `${copyFrom.name} (copy)` : "");
+  const [name, setName] = useState(copyFrom ? `${copyFrom.name} (copy)` : preset?.name ?? "");
   const [id, setId] = useState("");
   const [tab, setTab] = useState(copyFrom?.tab ?? tabs[0] ?? "");
   const [fieldmap, setFieldmap] = useState(copyFrom?.fieldmap ?? maps[0] ?? "");
@@ -68,7 +71,8 @@ export function NewCampaign({
           <select value={source} onChange={(e) => {
             const next = lanes.find((l) => l.id === e.target.value);
             setSource(e.target.value);
-            if (next) {
+            // from Import, copying a lane borrows its rules but keeps reading the uploaded file
+            if (next && !preset) {
               setTab(next.tab);
               setFieldmap(next.fieldmap);
             }

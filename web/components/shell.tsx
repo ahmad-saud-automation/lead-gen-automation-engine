@@ -18,6 +18,7 @@ export const NAV: NavGroup[] = [
     icon: "layout-dashboard",
     items: [
       { href: "/", label: "Dashboard", icon: "layout-dashboard" },
+      { href: "/import", label: "Import", icon: "upload" },
       { href: "/campaigns", label: "Campaigns", icon: "list-details" },
       { href: "/plan", label: "Plan preview", icon: "clipboard-check" },
       { href: "/runs", label: "Runs", icon: "activity" },
@@ -57,12 +58,24 @@ export function Sidebar() {
   const side = useRef<HTMLElement>(null);
   const tapOpens = useRef(false);
   const [dark, setDark] = useState(false);
+  const [canSignOut, setCanSignOut] = useState(false);
 
   // The page was already painted in the right theme by layout.tsx's script; this only makes
   // the button show the matching icon.
   useEffect(() => {
     setDark(document.documentElement.dataset.theme === "dark");
+    // Sign out is offered only where there is a login to leave (a server, or a password set)
+    fetch("/api/auth/status", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((s: { required?: boolean; signed_in?: boolean }) => setCanSignOut(Boolean(s.required && s.signed_in)))
+      .catch(() => {});
   }, []);
+
+  const signOut = () => {
+    fetch("/api/auth/logout", { method: "POST" })
+      .catch(() => {})
+      .finally(() => window.location.assign("/login"));
+  };
 
   const toggleTheme = () => {
     const next = dark ? "light" : "dark";
@@ -114,6 +127,9 @@ export function Sidebar() {
   useEffect(() => () => clearTimeout(shutTimer.current), []);
 
   const here = NAV.findIndex((g) => g.items.some((it) => isActive(pathname, it.href)));
+
+  // the login page stands alone: every link here would only lead back to it
+  if (pathname === "/login") return null;
 
   const link = (item: NavItem) => {
     const on = isActive(pathname, item.href);
@@ -188,6 +204,11 @@ export function Sidebar() {
         <button type="button" className="rail-btn" onClick={toggleTheme} aria-label={themeLabel} title={themeLabel}>
           <Icon name={dark ? "sun" : "moon"} size={24} />
         </button>
+        {canSignOut ? (
+          <button type="button" className="rail-btn" onClick={signOut} aria-label="Sign out" title="Sign out">
+            <Icon name="logout" size={24} />
+          </button>
+        ) : null}
       </div>
 
       <nav id="side-nav" className="phone-nav">
@@ -202,6 +223,12 @@ export function Sidebar() {
             <Icon name={dark ? "sun" : "moon"} size={22} />
             <span>{dark ? "Light mode" : "Dark mode"}</span>
           </button>
+          {canSignOut ? (
+            <button type="button" className="phone-theme" onClick={signOut}>
+              <Icon name="logout" size={22} />
+              <span>Sign out</span>
+            </button>
+          ) : null}
         </div>
       </nav>
     </aside>

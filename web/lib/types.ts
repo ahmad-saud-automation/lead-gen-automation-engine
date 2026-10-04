@@ -22,8 +22,75 @@ export type FieldmapCheck = {
   resolved?: Record<string, string>;
 };
 
-/** Where a tab was read from. `live: false` means a local snapshot, not the sheet. */
-export type TabSource = { live: boolean; path?: string };
+/** Where a tab was read from. `live: false` means a local snapshot or an uploaded file
+ *  (`kind: "import"`), not the sheet. */
+export type TabSource = { live: boolean; path?: string; kind?: "import" | "local_csv" | "service_account" | "link_export" };
+
+/** A lane's `schedule` — core/schedules.py normalize(). */
+export type LaneSchedule = {
+  enabled: boolean;
+  via: "app" | "windows";
+  kind: "minute" | "hourly" | "daily" | "weekly";
+  every: number;
+  start: string;
+  end: string;
+  days: string[];
+  test_mode: boolean;
+  anchor: string;
+};
+
+/** GET /api/campaigns/schedule — lane_schedule_view() in server.py. */
+export type LaneScheduleView = {
+  error?: string;
+  schedule: LaneSchedule;
+  problems: string[];
+  summary: string;
+  active: boolean;
+  next_run: string;
+  last?: { last_fire?: string; fired_at?: string; result?: string; run_id?: string };
+  windows_available?: boolean;
+  task?: { exists: boolean; name?: string; next_run?: string; last_run?: string; status?: string };
+};
+
+/** One uploaded CSV — core/imports.py save_upload(), listed by GET /api/imports. */
+export type ImportRecord = {
+  slug: string;
+  tab: string;
+  name: string;
+  file: string;
+  rows: number;
+  columns: number;
+  status_added: boolean;
+  uploaded: string;
+  fieldmap?: string;
+  lanes?: { id: string; name: string; enabled: boolean }[];
+};
+
+export type ImportsView = { imports: ImportRecord[]; sheet_tabs: string[] };
+
+export type ImportStats = {
+  rows: number;
+  duplicates: number;
+  suppressed: number;
+  in_ledger: number;
+  no_company: number;
+  with_icebreaker: number;
+  has_icebreaker_column: boolean;
+};
+
+/** GET /api/imports/preview — import_preview() in server.py. */
+export type ImportPreview = {
+  error?: string;
+  tab: string;
+  source: TabSource;
+  import?: ImportRecord | null;
+  headers: string[];
+  sample: Record<string, string>[];
+  stats: ImportStats;
+  check: FieldmapCheck;
+  lanes: { id: string; name: string; enabled: boolean }[];
+  hold_without_icebreaker: boolean;
+};
 
 /** GET /api/fieldmap/detail — fieldmap_detail() in server.py. */
 export type FieldmapField = {
@@ -78,6 +145,7 @@ export type CampaignSummary = {
   labels: number;
   auto_push: boolean;
   label_issues: string[];
+  schedule?: { via: "app" | "windows"; active: boolean; summary: string; next_run: string; problems: string[] };
 };
 
 export type ConfigIssue = { campaign: string; issue: string };
@@ -164,6 +232,7 @@ export type CampaignRaw = {
     skip_if_in_campaign?: boolean;
     skip_if_in_list?: boolean;
   };
+  schedule?: Partial<LaneSchedule>;
 };
 
 /** GET /api/campaigns/detail */
