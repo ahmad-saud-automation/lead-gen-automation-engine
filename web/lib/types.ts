@@ -102,6 +102,8 @@ export type FieldmapField = {
   mapped: string;
   suggested: string;
   resolved: string;
+  /** % of the first 500 rows that have a value in the column it resolves to */
+  fill?: number | null;
 };
 
 export type FieldmapDetail = {

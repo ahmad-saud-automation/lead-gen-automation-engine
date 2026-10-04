@@ -838,10 +838,12 @@ def fieldmap_detail(tab: str = "") -> dict:
     cfg = load_config()
     loaded = runner_mod.load_config_dir(CONFIG_DIR)
     lane = next((c for c in loaded["campaigns"] if not tab or c.tab == tab), None)
-    if not lane and imports_mod.is_import_tab(tab):
-        # an upload nobody reads yet: show its columns against an unsaved, auto-matched map,
-        # so it can be checked before a lane is made for it
-        lane = campaigns_mod.Campaign({"id": "", "tab": tab, "fieldmap": import_fieldmap_file(tab)})
+    if not lane and tab:
+        # a source nobody reads yet (an upload, or a sheet tab with no campaign): show its columns
+        # against its own map file, the same name the New-campaign wizard will give it
+        own = import_fieldmap_file(tab) if imports_mod.is_import_tab(tab) else \
+            f"fieldmap.{campaigns_mod.slug(tab) or 'source'}.json"
+        lane = campaigns_mod.Campaign({"id": "", "tab": tab, "fieldmap": own})
         loaded["fieldmaps"][lane.fieldmap] = fieldmap_mod.load(CONFIG_DIR / lane.fieldmap)
     if not lane:
         return {"error": f"No campaign uses tab '{tab}'."}
@@ -2375,8 +2377,9 @@ def _lanes_reading(tab: str) -> list[dict]:
 def import_preview(tab: str) -> dict:
     """Any tab — an upload or a sheet tab by name — with its first rows and what a lane would
     find in it: duplicates, suppressed firms, leads the ledger already handled. Free."""
-    tab = str(tab or "").strip()
-    if not tab:
+    # never strip: a tab may really end in a space ("Construction " in the Eco sheet)
+    tab = str(tab or "")
+    if not tab.strip():
         return {"error": "Give a tab name."}
     cfg = load_config()
     try:

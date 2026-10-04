@@ -128,11 +128,18 @@ def check_a_blank_is_never_written_over_anything():
     assert all(str(v).strip() for v in row.values()), row
 
 
+def check_tab_names_are_quoted_for_a1():
+    # "Construction " (trailing space) failed with 400 "Unable to parse range" unquoted
+    assert sheets.a1_tab("Construction ") == "'Construction '"
+    assert sheets.a1_tab("Practices") == "'Practices'"
+    assert sheets.a1_tab("Bob's leads") == "'Bob''s leads'", "an inner quote is doubled"
+
+
 CHECKS = [check_parse_url, check_export_url, check_read_csv_export,
           check_read_rejects_login_page, check_writeback_row,
           check_unverified_is_not_send_ready, check_writeback_blank_director_has_no_source,
           check_a_failed_lead_never_erases_the_address_already_on_the_row,
-          check_a_blank_is_never_written_over_anything]
+          check_a_blank_is_never_written_over_anything, check_tab_names_are_quoted_for_a1]
 
 
 def test_failed_lead_preserves_row(): check_a_failed_lead_never_erases_the_address_already_on_the_row()

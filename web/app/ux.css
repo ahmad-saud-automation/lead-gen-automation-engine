@@ -91,6 +91,7 @@ a.u-li:hover, .u-li.hover:hover { background: var(--white); }
 .u-li .t div { font-size: 12.5px; color: var(--muted); }
 .u-listhead { display: grid; gap: 14px; padding: 8px 18px; font-size: 12px; color: var(--muted); }
 .u-camp-li { grid-template-columns: 22px minmax(0, 2.2fr) 120px 140px 150px 160px 80px; }
+.u-src-li { grid-template-columns: minmax(0, 1fr) 170px 210px auto; }
 .u-handle { cursor: grab; color: var(--faint); font-size: 16px; letter-spacing: -2px; user-select: none; }
 .u-li.dragging { opacity: .4; }
 .u-li.over { box-shadow: inset 0 3px 0 var(--coral); }
@@ -259,6 +260,7 @@ body.u-dragging, body.u-dragging * { cursor: grabbing !important; user-select: n
   .u-grid3, .u-grid2, .u-fgrid, .u-fgrid.two, .u-presets, .u-builder, .u-settings, .u-status { grid-template-columns: minmax(0, 1fr); }
   .u-hide-m { display: none !important; }
   .u-camp-li { grid-template-columns: 22px minmax(0, 1fr) auto auto; }
+  .u-src-li { grid-template-columns: minmax(0, 1fr) auto; }
   .u-maprow { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 22px; }
   .u-maprow .arr, .u-maprow .eg { display: none; }
   .u-subnav { position: static; grid-auto-flow: column; overflow-x: auto; }

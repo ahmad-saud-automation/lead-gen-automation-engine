@@ -118,6 +118,15 @@ def read_via_csv_export(doc_id: str, gid: str = "", *, timeout: int = 30, opener
 
 # ── service-account client (read + write) ────────────────────────────
 
+def a1_tab(tab: str) -> str:
+    """A tab name as A1 notation wants it: always quoted, inner quotes doubled.
+
+    Unquoted, a name with a space at the end ("Construction ", "Clinics " in the Eco sheet) or
+    other punctuation fails with 400 "Unable to parse range" (found 2026-10-05). Quoting is
+    always valid, so every range is built through here."""
+    return "'" + str(tab).replace("'", "''") + "'"
+
+
 class SheetsClient:
     """Thin wrapper over the Sheets REST API using a service-account JSON."""
 
@@ -136,7 +145,7 @@ class SheetsClient:
 
     def read(self, doc_id: str, tab: str = "Combined") -> list[dict]:
         res = self._svc.spreadsheets().values().get(
-            spreadsheetId=doc_id, range=tab).execute()
+            spreadsheetId=doc_id, range=a1_tab(tab)).execute()
         values = res.get("values", [])
         if not values:
             return []
@@ -156,7 +165,7 @@ class SheetsClient:
                          if (s.get("properties") or {}).get("title")]}
 
     def _header(self, doc_id: str, tab: str) -> list[str]:
-        res = self._svc.spreadsheets().values().get(spreadsheetId=doc_id, range=f"{tab}!1:1").execute()
+        res = self._svc.spreadsheets().values().get(spreadsheetId=doc_id, range=f"{a1_tab(tab)}!1:1").execute()
         return [str(h).strip() for h in (res.get("values") or [[]])[0]]
 
     def open_writer(self, doc_id: str, tab: str, key_column: str = "Company Name",
@@ -184,7 +193,7 @@ class SheetsClient:
             if row_i is None:
                 return {"ok": False, "reason": "row not found", "key": update.get(key_column)}
             sheet_row = row_i + 2                       # +1 header, +1 for 1-based rows
-            data = [{"range": f"{tab}!{col_letter(cols[c])}{sheet_row}", "values": [[v]]}
+            data = [{"range": f"{a1_tab(tab)}!{col_letter(cols[c])}{sheet_row}", "values": [[v]]}
                     for c, v in update.items()
                     if c != key_column and c in writable and c in cols]
             if not data:
@@ -220,7 +229,7 @@ class SheetsClient:
             for col, val in up.items():
                 if col == key_column or col not in writable or col not in header:
                     continue
-                a1 = f"{tab}!{col_letter(header.index(col))}{sheet_row}"
+                a1 = f"{a1_tab(tab)}!{col_letter(header.index(col))}{sheet_row}"
                 data.append({"range": a1, "values": [[val]]})
             updated += 1
         if data:

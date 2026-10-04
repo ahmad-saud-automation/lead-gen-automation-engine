@@ -30,9 +30,9 @@ const BLANK: CampaignRaw = {
   limits: { per_run: 50, per_day: 100, max_spend_usd: 2 }, instantly: {}, writeback: { enabled: true },
 };
 
-export function NewCampaignWizard() {
+export function NewCampaignWizard({ presetTab }: { presetTab?: string }) {
   const [step, setStep] = useState(0);
-  const [c, setC] = useState<CampaignRaw>(BLANK);
+  const [c, setC] = useState<CampaignRaw>({ ...BLANK, tab: presetTab ?? "" });
   const [sched, setSched] = useState<LaneSchedule>(DEFAULT_SCHEDULE);
   const [copyFrom, setCopyFrom] = useState("");
   const [lanes, setLanes] = useState<CampaignsView["campaigns"]>([]);

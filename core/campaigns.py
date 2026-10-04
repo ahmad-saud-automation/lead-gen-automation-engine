@@ -45,7 +45,9 @@ class Campaign:
         self.name = str(self.raw.get("name") or self.id).strip()
         self.enabled = bool(self.raw.get("enabled", DEFAULTS["enabled"]))
         self.priority = int(self.raw.get("priority", DEFAULTS["priority"]) or 0)
-        self.tab = str(self.raw.get("tab") or "").strip()
+        # NOT stripped: a real tab can end in a space ("Construction " in the Eco sheet), and
+        # the trimmed name does not exist in the sheet
+        self.tab = str(self.raw.get("tab") or "")
         self.fieldmap = str(self.raw.get("fieldmap") or "").strip()
         self.rules = self.raw.get("rules") or {}
         self.order = self.raw.get("order") or []
@@ -118,7 +120,7 @@ def validate(campaigns: list[Campaign], *, require_push_target: bool = False) ->
         else:
             seen_ids.add(c.id)
 
-        if not c.tab:
+        if not c.tab.strip():
             bad("no 'tab' set — which sheet tab does this campaign read?")
 
         for why in rules_mod.validate_rules(c.rules):
@@ -195,11 +197,11 @@ def new_campaign(existing: list[dict], *, name: str, tab: str = "", fieldmap: st
 
     row.update({"id": cid, "name": name, "enabled": False, "auto_push": False,
                 "priority": last + 10})
-    row["tab"] = str(tab or row.get("tab") or "").strip()
+    row["tab"] = str(tab or row.get("tab") or "")          # kept exact, see Campaign.tab
     row["fieldmap"] = str(fieldmap or row.get("fieldmap") or "").strip()
     # the sheet's Campaign Type column says which lane sent a row, so a copy gets its own
     row["writeback"] = {**(row.get("writeback") or {}), "campaign_type": cid}
-    if not row["tab"]:
+    if not row["tab"].strip():
         return None, ["choose which sheet tab the campaign reads"]
     return row, []
 
