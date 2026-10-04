@@ -95,7 +95,7 @@ def check_summary_reads_like_the_windows_trigger():
 # ───────── the engine's clock and trigger switching, with every side effect faked ─────────
 
 _FAKED = ("CONFIG_DIR", "SCHEDULE_STATE", "SCHEDULE_LOG", "TASKS_DIR", "_schtasks",
-          "windows_available", "fire_lane")
+          "_task_allow_battery", "windows_available", "fire_lane")
 
 
 @contextmanager
@@ -132,6 +132,7 @@ def _engine(S, tmp: Path, lanes: list[dict]):
         return {"ok": name in tasks, "out": "Next Run Time: soon" if name in tasks else "", "err": ""}
 
     S._schtasks = fake_schtasks
+    S._task_allow_battery = lambda name: {"ok": True, "err": ""}
     S.windows_available = lambda: True
     S.fire_lane = lambda camp, **kw: fired.append(camp.id) or {"run_id": f"r{len(fired)}"}
     return S, fired, tasks
@@ -185,6 +186,17 @@ def check_switching_via_removes_the_other_trigger():
         assert "LeadGen-lane-a" not in tasks
 
 
+def check_windows_lane_on_a_linux_server_is_flagged():
+    win = {**LANE, "schedule": {**LANE["schedule"], "via": "windows"}}
+    with engine([win]) as (S, fired, _t):
+        S.windows_available = lambda: False          # the app moved to a Linux server
+        view = S.campaigns_view()["campaigns"][0]["schedule"]
+        assert view["problems"] and "not Windows" in view["problems"][0], view
+        assert not view["active"], "a lane nothing can fire must not show a next run"
+        S.scheduler_tick(at(MON, "08:01"))
+        assert fired == [], "the app clock never fires a Windows lane — the warning is the fix"
+
+
 CHECKS = [
     check_minute_slots_stay_inside_the_window,
     check_hourly_with_and_without_end,
@@ -197,6 +209,7 @@ CHECKS = [
     check_no_double_fire_across_a_restart,
     check_disabled_lane_or_windows_lane_is_not_fired_by_the_app,
     check_switching_via_removes_the_other_trigger,
+    check_windows_lane_on_a_linux_server_is_flagged,
 ]
 
 

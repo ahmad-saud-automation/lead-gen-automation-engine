@@ -1311,7 +1311,32 @@ def lane_task_create(cid: str, s: dict) -> dict:
     r = _schtasks(["/create", "/tn", _lane_task_name(cid), "/tr", f'"{bat}"'] + args + ["/f"])
     if not r["ok"]:
         return {"ok": False, "error": r["err"] or r["out"] or "schtasks failed"}
+    b = _task_allow_battery(_lane_task_name(cid))
+    if not b["ok"]:
+        _sched_log(f"{cid}: task created, but it may not start on battery — {b['err']}")
     return {"ok": True, **lane_task_status(cid)}
+
+
+def _task_allow_battery(name: str) -> dict:
+    """Let a task start (and keep running) on battery.
+
+    schtasks /create leaves Windows' defaults on: "start only on AC power" and "stop if the
+    computer switches to battery". On a laptop on battery the task is then SKIPPED in silence —
+    Last Run Time never changes (found 2026-10-04, 93% battery, slot 19:35 never ran). schtasks
+    cannot change these settings; PowerShell can. `name` is LeadGen-<id> with the id already
+    checked against campaigns.ID_RE, so it holds only [a-z0-9_-]."""
+    import subprocess
+    if not re.fullmatch(r"LeadGen-[a-z0-9][a-z0-9_-]{0,62}", name):
+        return {"ok": False, "err": "unexpected task name"}
+    script = (f"$t = Get-ScheduledTask -TaskName '{name}'; $s = $t.Settings; "
+              "$s.DisallowStartIfOnBatteries = $false; $s.StopIfGoingOnBatteries = $false; "
+              f"Set-ScheduledTask -TaskName '{name}' -Settings $s | Out-Null")
+    try:
+        p = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                           capture_output=True, text=True, timeout=30)
+        return {"ok": p.returncode == 0, "err": (p.stderr or "").strip()[:300]}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "err": str(e)}
 
 
 def lane_task_delete(cid: str) -> None:
@@ -1420,6 +1445,10 @@ def _scheduler_loop() -> None:
 
 def lane_schedule_view(camp, state: dict | None = None, *, now: datetime | None = None) -> dict:
     s, problems = schedules_mod.normalize(camp.schedule)
+    if s["enabled"] and s["via"] == "windows" and not windows_available():
+        # a lane saved on the Windows PC and copied to a Linux server: nothing would ever fire it
+        problems.append("set to run from Windows, but this server is not Windows — "
+                        "open its Schedule tab and choose In the app")
     now = now or datetime.now()
     on = bool(camp.enabled and s["enabled"] and not problems)
     nxt = schedules_mod.next_after(s, now) if on else None
