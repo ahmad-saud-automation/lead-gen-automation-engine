@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 
 import { SavedNoteBar } from "@/components/saved-note";
-import { Sidebar } from "@/components/shell";
+import { USidebar } from "@/components/u-shell";
 import "./globals.css";
 import "./leadgen.css";
+import "./ux.css";
 
 export const metadata: Metadata = {
   title: "Lead Gen Engine",
@@ -34,7 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        <Sidebar />
+        <USidebar />
         <main className="main">
           <SavedNoteBar />
           {children}

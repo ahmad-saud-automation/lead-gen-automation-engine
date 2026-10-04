@@ -145,7 +145,7 @@ export type CampaignSummary = {
   labels: number;
   auto_push: boolean;
   label_issues: string[];
-  schedule?: { via: "app" | "windows"; active: boolean; summary: string; next_run: string; problems: string[] };
+  schedule?: { via: "app" | "windows"; test_mode: boolean; active: boolean; summary: string; next_run: string; problems: string[] };
 };
 
 export type ConfigIssue = { campaign: string; issue: string };
@@ -345,4 +345,52 @@ export type PlanReport = {
   config_issues?: { campaign: string; issue: string }[];
   fieldmaps?: Record<string, FieldmapCheck>;
   sources?: Record<string, TabSource>;
+};
+
+/* ── V5 screens ── */
+
+/** GET /api/sheets/info */
+export type SheetInfo = { ok: boolean; detail: string; title: string; tabs: string[] };
+
+/** GET /api/instantly/options */
+export type InstantlyOptions = {
+  ok: boolean;
+  detail: string;
+  campaigns: { id: string; name: string; status: string }[];
+  lists: { id: string; name: string }[];
+};
+
+/** POST /api/connections/test — ok null = cannot be tested for free. */
+export type ConnectionTest = { ok: boolean | null; detail: string; credits?: number };
+
+/** POST /api/campaigns/preview */
+export type CampaignCounts = {
+  error?: string;
+  rows: number;
+  matched: number;
+  not_contacted: number;
+  done_before: number;
+  take: number;
+  day_remaining: number;
+  per_run: number;
+  est_cost_per_run: number;
+  est_cost_per_day: number;
+};
+
+/** GET /api/campaigns/readiness */
+export type Readiness = {
+  error?: string;
+  campaign: string;
+  items: { ok: boolean; text: string; fix: string }[];
+  done: number;
+  total: number;
+};
+
+/** POST /api/schedules/preview */
+export type SchedulePreview = {
+  summary: string;
+  problems: string[];
+  next: string[];
+  schedule: LaneSchedule;
+  windows_available: boolean;
 };

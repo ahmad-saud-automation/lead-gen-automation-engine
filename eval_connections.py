@@ -145,7 +145,49 @@ def check_readiness_names_what_to_fix():
         assert "error" in S.campaign_readiness("nope")
 
 
+def check_schedule_preview_uses_the_clocks_maths():
+    from datetime import datetime
+    from webapp import server as S
+    r = S.schedule_preview({"kind": "weekly", "days": ["MON", "WED"], "start": "09:00", "anchor": "2026-10-05"},
+                           now=datetime(2026, 10, 5, 8, 0))
+    assert r["next"] == ["2026-10-05 09:00", "2026-10-07 09:00", "2026-10-12 09:00"], r
+    assert r["summary"] == "MON, WED at 09:00"
+    bad = S.schedule_preview({"kind": "weekly"})
+    assert bad["problems"] and bad["next"] == [], "a schedule with a problem promises no times"
+
+
+def check_display_reads_share_one_sheet_read():
+    import threading
+    import time as _t
+    from webapp import server as S
+    real, calls = S._read_tab, []
+
+    def slow(cfg, tab):
+        calls.append(tab)
+        _t.sleep(0.3)
+        return [{"a": "1"}]
+    S._read_tab = slow
+    S._TAB_CACHE.clear()
+    try:
+        cfg = {"sheet_url": "u"}
+        ts = [threading.Thread(target=S._read_tab_for_display, args=(cfg, "T")) for _ in range(4)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        assert calls == ["T"], f"4 screens at once must share one read, got {calls}"
+        S._read_tab_for_display(cfg, "T")
+        assert calls == ["T"], "a second look within a minute reuses it"
+        key = next(iter(S._TAB_CACHE))
+        S._TAB_CACHE[key] = (S._TAB_CACHE[key][0] - S.TAB_CACHE_SECONDS - 1, S._TAB_CACHE[key][1])
+        S._read_tab_for_display(cfg, "T")
+        assert calls == ["T", "T"], "after a minute it reads the sheet again"
+    finally:
+        S._read_tab = real
+        S._TAB_CACHE.clear()
+
+
 CHECKS = [check_millionverifier_reads_credits_and_explains_a_bad_key,
+          check_display_reads_share_one_sheet_read,
+          check_schedule_preview_uses_the_clocks_maths,
           check_instantly_options_pages_and_names_the_status,
           check_instantly_without_list_scope_still_gives_campaigns,
           check_anymailfinder_and_openai,

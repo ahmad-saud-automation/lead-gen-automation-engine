@@ -1,17 +1,8 @@
-import { CampaignEditor } from "@/components/campaign-editor";
+import { CampaignPage } from "@/components/campaign/page";
 
 export const metadata = { title: "Campaign · Lead Gen Engine" };
 
-// The editor draws its own top bar: the Save button lives there, always in reach.
-// ?tab=schedule opens that section (a schedule save comes back to it).
-export default async function CampaignPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string }>;
-}) {
+export default async function CampaignRoute({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { tab } = await searchParams;
-  return <CampaignEditor id={decodeURIComponent(id)} initialTab={tab} />;
+  return <CampaignPage id={decodeURIComponent(id)} />;
 }

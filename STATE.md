@@ -4,7 +4,24 @@ Handoff so a new session does not re-explore. **Last updated 2026-10-04.**
 
 ---
 
-## ▶ NEXT — choose the server, then deploy (docs/DEPLOY.md)
+## ▶ NOW — UX redesign (2026-10-04)
+
+User: the screens feel technical and noisy. Agreed order: research → architecture → sample → build.
+- **Architecture APPROVED** ("ok to all"): `docs/UX-REDESIGN.md` — 5 pages (Home · Campaigns · Leads ·
+  Activity · Settings), campaign page = status card + Who / How many / Send to / When + closed Advanced,
+  4-step wizard, plain word list, nothing removed (§6 maps every control).
+- **Clickable sample built**: `docs/sample-ui/index.html` (one file, fake data, same theme, works at
+  phone width, driven in headless Chrome: all pages + clicks + drags pass). Waiting for his feedback.
+- **Open decision**: how each technical setting is shown (finding-emails presets + ladder, column
+  matching, extra info for Instantly drag-and-drop, filters, Instantly options, speed presets…). The
+  sample shows my proposals marked "Proposal". Build nothing real until he answers.
+
+## ▶ THEN — choose the server, then deploy (docs/DEPLOY.md)
+
+Server advice given 2026-10-04: no need to buy one — his Hostinger VPS (n8n + YT Dashboard,
+187.77.122.151) has 2.5 GB RAM free; it uses Docker + Traefik, so this app would deploy like the
+YT Dashboard (containers + a subdomain), NOT the Caddy route in DEPLOY.md. Waiting for his OK and a
+subdomain name.
 
 V4 is **finished and merged into `main`** (A–I, below). What is left is outside the code:
 

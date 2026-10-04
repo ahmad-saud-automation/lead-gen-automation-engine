@@ -648,6 +648,33 @@ def _read_tab(cfg: dict, tab: str) -> list[dict]:
     return sheets_mod.read_via_csv_export(parsed["doc_id"], parsed["gid"])
 
 
+_TAB_CACHE: dict[tuple, tuple[float, list[dict]]] = {}
+_TAB_LOCKS: dict[tuple, threading.Lock] = {}
+_TAB_LOCKS_GUARD = threading.Lock()
+TAB_CACHE_SECONDS = 60
+
+
+def _read_tab_for_display(cfg: dict, tab: str) -> list[dict]:
+    """`_read_tab` for screens that only SHOW counts (previews, the checklist, column matching).
+
+    The campaign page asks for counts, the checklist and the column list at once, and each one
+    read all 21,714 rows of the sheet from Google: ~15 s before anything appeared (measured
+    2026-10-05). They now share ONE read, kept for a minute; requests that arrive during that
+    read wait for it instead of starting their own. Runs and sends never use this — they always
+    read the sheet fresh."""
+    src = tab_source(cfg, tab)
+    key = (tab, src["kind"], src.get("path", ""), cfg.get("sheet_url", ""))
+    with _TAB_LOCKS_GUARD:
+        lock = _TAB_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        hit = _TAB_CACHE.get(key)
+        if hit and time.time() - hit[0] < TAB_CACHE_SECONDS:
+            return hit[1]
+        rows = _read_tab(cfg, tab)
+        _TAB_CACHE[key] = (time.time(), rows)
+        return rows
+
+
 def campaigns_view() -> dict:
     """Every campaign, plus any config problem that would stop a run."""
     loaded = runner_mod.load_config_dir(CONFIG_DIR)
@@ -659,7 +686,7 @@ def campaigns_view() -> dict:
         "windows_available": windows_available(),
         "campaigns": [{
             "schedule": {k: v for k, v in lane_schedule_view(c, state).items() if k != "schedule"}
-            | {"via": schedules_mod.normalize(c.schedule)[0]["via"]},
+            | {k: schedules_mod.normalize(c.schedule)[0][k] for k in ("via", "test_mode")},
             "id": c.id, "name": c.name, "enabled": c.enabled, "priority": c.priority,
             "tab": c.tab, "fieldmap": c.fieldmap,
             "per_run": c.per_run, "per_day": c.per_day,
@@ -685,7 +712,7 @@ def build_plan(*, enabled_only: bool = True) -> dict:
     for tab in sorted({c.tab for c in lanes if c.tab}):
         sources[tab] = tab_source(cfg, tab)
         try:
-            rows = _read_tab(cfg, tab)
+            rows = _read_tab_for_display(cfg, tab)
         except Exception as e:  # noqa: BLE001 — a bad tab must not hide the other tabs
             errors.append(f"could not read tab '{tab}': {e}")
             continue
@@ -818,7 +845,7 @@ def fieldmap_detail(tab: str = "") -> dict:
     if not lane:
         return {"error": f"No campaign uses tab '{tab}'."}
     try:
-        rows = _read_tab(cfg, lane.tab)
+        rows = _read_tab_for_display(cfg, lane.tab)
     except Exception as e:  # noqa: BLE001
         return {"error": f"Could not read tab '{lane.tab}': {e}"}
 
@@ -2074,7 +2101,7 @@ def api_fieldmap(tab: str = ""):
     if not lane:
         return {"error": f"No campaign uses tab '{tab}'."}
     try:
-        rows = _read_tab(cfg, lane.tab)
+        rows = _read_tab_for_display(cfg, lane.tab)
     except Exception as e:  # noqa: BLE001
         return {"error": f"Could not read tab '{lane.tab}': {e}"}
     heads = runner_mod.headers_of(rows)
@@ -2208,7 +2235,7 @@ def campaign_preview(raw: dict) -> dict:
         return {"error": "A filter is not finished: " + "; ".join(problems)}
     cfg = load_config()
     try:
-        rows = _read_tab(cfg, camp.tab)
+        rows = _read_tab_for_display(cfg, camp.tab)
     except Exception as e:  # noqa: BLE001
         return {"error": f"Could not read '{camp.tab}': {e}"}
     heads = runner_mod.headers_of(rows)
@@ -2240,7 +2267,7 @@ def campaign_readiness(cid: str) -> dict:
     problems = [i["issue"] for i in campaigns_mod.validate([camp])]
     add(not problems, "Settings are complete" if not problems else "Settings problem: " + "; ".join(problems), "who")
     try:
-        rows = _read_tab(cfg, camp.tab)
+        rows = _read_tab_for_display(cfg, camp.tab)
         heads = runner_mod.headers_of(rows)
         fm = _fieldmap_for_raw(camp, loaded, heads)
         check = runner_mod.check_fieldmap(fm, heads)
@@ -2282,6 +2309,29 @@ def reorder_campaigns(ids: list[str]) -> dict:
         c["priority"] = prio[str(c.get("id"))]
     body["campaigns"] = rows
     return _write_campaigns_raw(body)
+
+
+def schedule_preview(raw: dict, *, now: datetime | None = None, count: int = 3) -> dict:
+    """A schedule as it stands on screen: its sentence, its problems, its next few runs — from
+    the same code the clock uses, so the screen can never promise a time the clock won't keep."""
+    s, problems = schedules_mod.normalize(raw)
+    if s["via"] == "windows" and not windows_available():
+        problems.append("this engine is not running on Windows — choose the app")
+    nxt, t = [], now or datetime.now()
+    if not problems:
+        for _ in range(count):
+            slot = schedules_mod.next_after(s, t)
+            if slot is None:
+                break
+            nxt.append(slot.strftime("%Y-%m-%d %H:%M"))
+            t = slot
+    return {"summary": schedules_mod.summary(s), "problems": problems, "next": nxt, "schedule": s,
+            "windows_available": windows_available()}
+
+
+@app.post("/api/schedules/preview")
+async def api_schedule_preview(request: Request):
+    return schedule_preview(await request.json())
 
 
 @app.get("/api/sheets/info")
@@ -2329,7 +2379,7 @@ def import_preview(tab: str) -> dict:
         return {"error": "Give a tab name."}
     cfg = load_config()
     try:
-        rows = _read_tab(cfg, tab)
+        rows = _read_tab_for_display(cfg, tab)
     except Exception as e:  # noqa: BLE001
         return {"error": f"Could not read '{tab}': {e}"}
     heads = runner_mod.headers_of(rows)
